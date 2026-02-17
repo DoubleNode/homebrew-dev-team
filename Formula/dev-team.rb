@@ -2,8 +2,7 @@ class DevTeam < Formula
   desc "Starfleet Development Environment - AI-powered multi-team development infrastructure"
   homepage "https://github.com/DoubleNode/homebrew-dev-team"
   url "https://github.com/DoubleNode/homebrew-dev-team.git",
-      tag: "v1.0.0",
-      revision: "6d0e669e03d9f5cf8629af0968240adecc89e88c"
+      tag: "v1.0.0"
   license "MIT"
   version "1.0.0"
 
