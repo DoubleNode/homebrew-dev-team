@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "kanban-integration": {
+      "command": "node",
+      "args": [
+        "{{DEV_TEAM_DIR}}/mcp-servers/kanban-integration/dist/index.js"
+      ],
+      "env": {
+        "KANBAN_BOARD_PATH": "{{DEV_TEAM_DIR}}/kanban"
+      }
+    }
+  }
+}

@@ -1,0 +1,516 @@
+#!/bin/bash
+# Fleet Monitor Installer
+# Sets up cross-machine monitoring, agent status display, and Tailscale networking
+
+set -euo pipefail
+
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/common.sh"
+
+#──────────────────────────────────────────────────────────────────────────────
+# Constants
+#──────────────────────────────────────────────────────────────────────────────
+
+FLEET_MONITOR_PORT="${FLEET_MONITOR_PORT:-3000}"
+FLEET_MODE="${FLEET_MODE:-standalone}"  # standalone | client | server
+TAILSCALE_FUNNEL_PORT="${TAILSCALE_FUNNEL_PORT:-443}"
+
+#──────────────────────────────────────────────────────────────────────────────
+# Detection Functions
+#──────────────────────────────────────────────────────────────────────────────
+
+# Check if Tailscale is installed
+has_tailscale() {
+    command -v tailscale &>/dev/null || [ -x "/opt/homebrew/bin/tailscale" ]
+}
+
+# Check if iTerm2 is available
+has_iterm2() {
+    [ -d "/Applications/iTerm.app" ]
+}
+
+# Check if Fleet Monitor is already running
+is_fleet_monitor_running() {
+    pgrep -f "fleet-monitor/server/server.js" &>/dev/null
+}
+
+# Generate a unique machine ID (UUID)
+generate_machine_id() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    else
+        # Fallback: use hostname + timestamp hash
+        echo "$(hostname)-$(date +%s)" | md5sum | cut -d' ' -f1
+    fi
+}
+
+# Get Tailscale IP address
+get_tailscale_ip() {
+    if has_tailscale; then
+        local ts_path
+        if [ -x "/opt/homebrew/bin/tailscale" ]; then
+            ts_path="/opt/homebrew/bin/tailscale"
+        else
+            ts_path="tailscale"
+        fi
+
+        $ts_path ip -4 2>/dev/null | head -n1 || echo ""
+    else
+        echo ""
+    fi
+}
+
+# Get Tailscale hostname
+get_tailscale_hostname() {
+    if has_tailscale; then
+        local ts_path
+        if [ -x "/opt/homebrew/bin/tailscale" ]; then
+            ts_path="/opt/homebrew/bin/tailscale"
+        else
+            ts_path="tailscale"
+        fi
+
+        $ts_path status --json 2>/dev/null | grep -o '"HostName":"[^"]*"' | cut -d'"' -f4 || echo ""
+    else
+        echo ""
+    fi
+}
+
+#──────────────────────────────────────────────────────────────────────────────
+# Configuration Functions
+#──────────────────────────────────────────────────────────────────────────────
+
+# Create Fleet Monitor configuration
+create_fleet_config() {
+    local config_file="$DEV_TEAM_DIR/config/fleet-config.json"
+    local machine_id="${1:-}"
+    local nickname="${2:-}"
+
+    if [ -z "$machine_id" ]; then
+        machine_id=$(generate_machine_id)
+    fi
+
+    local hostname=$(hostname -s)
+    local tailscale_enabled="false"
+    local tailscale_ip=""
+    local tailscale_hostname=""
+
+    if has_tailscale; then
+        tailscale_enabled="true"
+        tailscale_ip=$(get_tailscale_ip)
+        tailscale_hostname=$(get_tailscale_hostname)
+    fi
+
+    local iterm_integration="false"
+    local show_agent_panels="false"
+    if has_iterm2; then
+        iterm_integration="true"
+        show_agent_panels="true"
+    fi
+
+    local server_url="http://localhost:${FLEET_MONITOR_PORT}"
+    if [ "$FLEET_MODE" = "client" ]; then
+        # For client mode, we'll need to prompt for server URL
+        read -p "Enter Fleet Monitor server URL (default: $server_url): " custom_url
+        server_url="${custom_url:-$server_url}"
+    fi
+
+    # Create config from template
+    sed \
+        -e "s|{{FLEET_MODE}}|$FLEET_MODE|g" \
+        -e "s|{{FLEET_SERVER_URL}}|$server_url|g" \
+        -e "s|{{MACHINE_ID}}|$machine_id|g" \
+        -e "s|{{HOSTNAME}}|$hostname|g" \
+        -e "s|{{NICKNAME}}|${nickname:-}|g" \
+        -e "s|{{TAILSCALE_ENABLED}}|$tailscale_enabled|g" \
+        -e "s|{{LOCAL_PORT}}|$FLEET_MONITOR_PORT|g" \
+        -e "s|{{PUBLIC_PORT}}|$TAILSCALE_FUNNEL_PORT|g" \
+        -e "s|{{SHOW_AGENT_PANELS}}|$show_agent_panels|g" \
+        -e "s|{{ITERM_INTEGRATION}}|$iterm_integration|g" \
+        "$SCRIPT_DIR/../../share/templates/fleet-monitor/fleet-config.template.json" \
+        > "$config_file"
+
+    success "Created Fleet Monitor configuration at $config_file"
+    echo "$machine_id"
+}
+
+# Create machine identity file
+create_machine_identity() {
+    local machine_id="$1"
+    local nickname="${2:-}"
+    local identity_file="$DEV_TEAM_DIR/config/machine-identity.json"
+
+    local hostname=$(hostname -s)
+    local local_ip=$(ipconfig getifaddr en0 2>/dev/null || echo "unknown")
+    local tailscale_ip=$(get_tailscale_ip)
+    local tailscale_hostname=$(get_tailscale_hostname)
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    local can_host_server="true"
+    if [ "$FLEET_MODE" = "client" ]; then
+        can_host_server="false"
+    fi
+
+    local tailscale_enabled="false"
+    if has_tailscale; then
+        tailscale_enabled="true"
+    fi
+
+    local iterm_available="false"
+    if has_iterm2; then
+        iterm_available="true"
+    fi
+
+    # Create identity from template
+    sed \
+        -e "s|{{MACHINE_ID}}|$machine_id|g" \
+        -e "s|{{HOSTNAME}}|$hostname|g" \
+        -e "s|{{NICKNAME}}|${nickname:-}|g" \
+        -e "s|{{TIMESTAMP}}|$timestamp|g" \
+        -e "s|{{MACHINE_ROLE}}|${FLEET_MODE}|g" \
+        -e "s|{{ORGANIZATION}}|starfleet|g" \
+        -e "s|{{CAN_HOST_SERVER}}|$can_host_server|g" \
+        -e "s|{{TAILSCALE_ENABLED}}|$tailscale_enabled|g" \
+        -e "s|{{ITERM_AVAILABLE}}|$iterm_available|g" \
+        -e "s|{{LOCAL_IP}}|$local_ip|g" \
+        -e "s|{{TAILSCALE_IP}}|${tailscale_ip:-unknown}|g" \
+        -e "s|{{TAILSCALE_HOSTNAME}}|${tailscale_hostname:-unknown}|g" \
+        "$SCRIPT_DIR/../../share/templates/fleet-monitor/machine-identity.template.json" \
+        > "$identity_file"
+
+    success "Created machine identity at $identity_file"
+}
+
+#──────────────────────────────────────────────────────────────────────────────
+# Installation Functions
+#──────────────────────────────────────────────────────────────────────────────
+
+# Install Fleet Monitor server
+install_fleet_server() {
+    local fleet_dir="$DEV_TEAM_DIR/fleet-monitor"
+
+    info "Installing Fleet Monitor server..."
+
+    # Check if Fleet Monitor source exists in the package
+    if [ ! -d "$SCRIPT_DIR/../../fleet-monitor" ]; then
+        error "Fleet Monitor source not found in package"
+        return 1
+    fi
+
+    # Copy Fleet Monitor files
+    info "Copying Fleet Monitor files to $fleet_dir"
+    cp -R "$SCRIPT_DIR/../../fleet-monitor" "$fleet_dir"
+
+    # Install Node dependencies
+    info "Installing Node.js dependencies (this may take a minute)..."
+    (
+        cd "$fleet_dir/server"
+        npm install --production --silent
+    ) || {
+        error "Failed to install Fleet Monitor dependencies"
+        return 1
+    }
+
+    success "Fleet Monitor server installed at $fleet_dir"
+}
+
+# Install Tailscale Funnel restore script and LaunchAgent
+install_tailscale_funnel() {
+    if ! has_tailscale; then
+        info "Tailscale not installed, skipping Funnel setup"
+        return 0
+    fi
+
+    info "Setting up Tailscale Funnel restore script..."
+
+    local funnel_script="$DEV_TEAM_DIR/tailscale-funnel-restore.sh"
+    local ts_path="/opt/homebrew/bin/tailscale"
+
+    # Get team ports for LCARS dashboards
+    local team_routes=""
+    # Use compgen to check if glob pattern matches any files
+    if compgen -G "$DEV_TEAM_DIR"/lcars-ports/*.port >/dev/null 2>&1; then
+        for team_port_file in "$DEV_TEAM_DIR"/lcars-ports/*.port; do
+            if [ -f "$team_port_file" ]; then
+                local team_name=$(basename "$team_port_file" .port)
+                local port=$(cat "$team_port_file")
+                local path="/${team_name}"
+                team_routes+="$ts_path funnel --bg --yes --set-path $path http://localhost:$port\n"
+                team_routes+="echo \"✓ Port ${TAILSCALE_FUNNEL_PORT}${path} configured\"\n\n"
+            fi
+        done
+    fi
+
+    # Create funnel restore script from template
+    sed \
+        -e "s|{{TAILSCALE_PATH}}|$ts_path|g" \
+        -e "s|{{FUNNEL_PORT}}|$TAILSCALE_FUNNEL_PORT|g" \
+        -e "s|{{TEAM_ROUTES}}|$team_routes|g" \
+        "$SCRIPT_DIR/../../share/templates/fleet-monitor/tailscale-funnel.template.sh" \
+        > "$funnel_script"
+
+    chmod +x "$funnel_script"
+
+    success "Tailscale Funnel restore script created at $funnel_script"
+
+    # Install Funnel LaunchAgent to restore routes on system restart
+    local launchagent_file="$HOME/Library/LaunchAgents/com.devteam.tailscale-funnel.plist"
+
+    info "Installing Tailscale Funnel LaunchAgent..."
+
+    # Create LaunchAgent from template
+    sed \
+        -e "s|{{FUNNEL_SCRIPT_PATH}}|$funnel_script|g" \
+        -e "s|{{LOG_DIR}}|$DEV_TEAM_DIR/logs|g" \
+        "$SCRIPT_DIR/../../share/templates/fleet-monitor/funnel-launchagent.template.plist" \
+        > "$launchagent_file"
+
+    # Load LaunchAgent
+    if launchctl list | grep -q "com.devteam.tailscale-funnel"; then
+        info "Unloading existing Tailscale Funnel LaunchAgent..."
+        launchctl unload "$launchagent_file" 2>/dev/null || true
+    fi
+
+    info "Loading Tailscale Funnel LaunchAgent..."
+    launchctl load "$launchagent_file"
+
+    success "Tailscale Funnel LaunchAgent installed (will restore routes on restart)"
+}
+
+# Install Fleet Monitor LaunchAgent
+install_fleet_launchagent() {
+    local launchagent_file="$HOME/Library/LaunchAgents/com.devteam.fleet-monitor.plist"
+    local fleet_server_path="$DEV_TEAM_DIR/fleet-monitor/server"
+    local node_path
+
+    # Find Node.js path
+    if command -v node &>/dev/null; then
+        node_path=$(command -v node)
+    elif [ -x "/opt/homebrew/bin/node" ]; then
+        node_path="/opt/homebrew/bin/node"
+    else
+        error "Node.js not found. Please install Node.js first."
+        return 1
+    fi
+
+    info "Installing Fleet Monitor LaunchAgent..."
+
+    # Create LaunchAgent from template
+    sed \
+        -e "s|{{NODE_PATH}}|$node_path|g" \
+        -e "s|{{FLEET_SERVER_PATH}}|$fleet_server_path|g" \
+        -e "s|{{LOG_DIR}}|$DEV_TEAM_DIR/logs|g" \
+        -e "s|{{HOMEBREW_PREFIX}}|/opt/homebrew|g" \
+        -e "s|{{HOME_DIR}}|$HOME|g" \
+        -e "s|{{FLEET_PORT}}|$FLEET_MONITOR_PORT|g" \
+        "$SCRIPT_DIR/../../share/templates/fleet-monitor/fleet-launchagent.template.plist" \
+        > "$launchagent_file"
+
+    # Create logs directory
+    mkdir -p "$DEV_TEAM_DIR/logs"
+
+    # Load LaunchAgent
+    if launchctl list | grep -q "com.devteam.fleet-monitor"; then
+        info "Unloading existing Fleet Monitor LaunchAgent..."
+        launchctl unload "$launchagent_file" 2>/dev/null || true
+    fi
+
+    info "Loading Fleet Monitor LaunchAgent..."
+    launchctl load "$launchagent_file"
+
+    # Wait a moment for service to start
+    sleep 2
+
+    if is_fleet_monitor_running; then
+        success "Fleet Monitor LaunchAgent installed and running"
+    else
+        warning "Fleet Monitor LaunchAgent installed but service may not have started"
+        info "Check logs at $DEV_TEAM_DIR/logs/fleet-monitor.log"
+    fi
+}
+
+# Install iTerm2 integration for agent panels
+install_iterm_integration() {
+    if ! has_iterm2; then
+        info "iTerm2 not installed, skipping agent panel setup"
+        return 0
+    fi
+
+    info "Setting up iTerm2 agent panel integration..."
+
+    # Copy iTerm2 helper scripts
+    local iterm_badge_helper="$DEV_TEAM_DIR/iterm2_badge_helper.sh"
+    local iterm_window_manager="$DEV_TEAM_DIR/iterm2_window_manager.py"
+
+    if [ -f "$SCRIPT_DIR/../../share/scripts/iterm2_badge_helper.sh" ]; then
+        cp "$SCRIPT_DIR/../../share/scripts/iterm2_badge_helper.sh" "$iterm_badge_helper"
+        chmod +x "$iterm_badge_helper"
+    fi
+
+    if [ -f "$SCRIPT_DIR/../../share/scripts/iterm2_window_manager.py" ]; then
+        cp "$SCRIPT_DIR/../../share/scripts/iterm2_window_manager.py" "$iterm_window_manager"
+        chmod +x "$iterm_window_manager"
+    fi
+
+    success "iTerm2 agent panel integration configured"
+}
+
+#──────────────────────────────────────────────────────────────────────────────
+# Main Installation Function
+#──────────────────────────────────────────────────────────────────────────────
+
+install_fleet_monitor() {
+    header "Fleet Monitor Setup"
+
+    # Check if Fleet Monitor is desired
+    if [ "${SKIP_FLEET_MONITOR:-}" = "true" ]; then
+        info "Fleet Monitor installation skipped (SKIP_FLEET_MONITOR=true)"
+        return 0
+    fi
+
+    # For non-interactive mode, skip if not explicitly enabled
+    if [ "${NON_INTERACTIVE:-}" = "true" ] && [ "${INSTALL_FLEET_MONITOR:-}" != "true" ]; then
+        info "Fleet Monitor installation skipped (non-interactive mode)"
+        return 0
+    fi
+
+    # Interactive prompt
+    if [ "${NON_INTERACTIVE:-}" != "true" ]; then
+        echo ""
+        echo "Fleet Monitor enables cross-machine monitoring of agent sessions,"
+        echo "displays agent status panels, and provides network service discovery."
+        echo ""
+        echo "Features:"
+        echo "  • Web-based LCARS dashboard for monitoring all machines"
+        echo "  • Agent status display in iTerm2 terminals (if available)"
+        echo "  • Tailscale networking for secure multi-machine access (if available)"
+        echo "  • Real-time session tracking and uptime monitoring"
+        echo ""
+
+        read -p "Install Fleet Monitor? (y/n, default: n): " install_fleet
+        if [[ ! "$install_fleet" =~ ^[Yy] ]]; then
+            info "Skipping Fleet Monitor installation"
+            return 0
+        fi
+
+        # Ask for Fleet mode
+        echo ""
+        echo "Fleet Monitor modes:"
+        echo "  1) standalone - Run Fleet Monitor server on this machine (recommended for single machine)"
+        echo "  2) server     - Run Fleet Monitor server, allow other machines to connect"
+        echo "  3) client     - Connect to an existing Fleet Monitor server"
+        echo ""
+        read -p "Select mode (1-3, default: 1): " mode_choice
+
+        case "$mode_choice" in
+            2) FLEET_MODE="server" ;;
+            3) FLEET_MODE="client" ;;
+            *) FLEET_MODE="standalone" ;;
+        esac
+
+        # Ask for machine nickname
+        read -p "Enter a nickname for this machine (optional, default: hostname): " machine_nickname
+    fi
+
+    # Create necessary directories
+    mkdir -p "$DEV_TEAM_DIR/config"
+    mkdir -p "$DEV_TEAM_DIR/logs"
+
+    # Generate machine ID
+    local machine_id=$(generate_machine_id)
+    info "Machine ID: $machine_id"
+
+    # Create configuration files
+    machine_id=$(create_fleet_config "$machine_id" "${machine_nickname:-}")
+    create_machine_identity "$machine_id" "${machine_nickname:-}"
+
+    # Install Fleet Monitor server (for standalone and server modes)
+    if [ "$FLEET_MODE" != "client" ]; then
+        install_fleet_server || return 1
+        install_fleet_launchagent || return 1
+    fi
+
+    # Install Tailscale integration (if available)
+    if has_tailscale; then
+        install_tailscale_funnel
+    fi
+
+    # Install iTerm2 integration (if available)
+    install_iterm_integration
+
+    # Final success message
+    echo ""
+    success "Fleet Monitor installation complete!"
+    echo ""
+
+    if [ "$FLEET_MODE" != "client" ]; then
+        local access_url="http://localhost:${FLEET_MONITOR_PORT}"
+
+        if has_tailscale; then
+            local ts_hostname=$(get_tailscale_hostname)
+            if [ -n "$ts_hostname" ]; then
+                access_url="https://${ts_hostname}"
+            fi
+        fi
+
+        info "Fleet Monitor dashboard: $access_url"
+        info "LCARS interface: $access_url/lcars"
+
+        if has_tailscale; then
+            echo ""
+            info "Tailscale Funnel configured - dashboard is accessible from anywhere"
+            info "Run 'tailscale funnel status' to see URLs"
+        fi
+    else
+        info "Fleet Monitor client configured"
+        info "This machine will report to the configured Fleet Monitor server"
+    fi
+
+    echo ""
+}
+
+# Uninstall function
+uninstall_fleet_monitor() {
+    header "Fleet Monitor Uninstall"
+
+    # Stop and remove Fleet Monitor LaunchAgent
+    local launchagent_file="$HOME/Library/LaunchAgents/com.devteam.fleet-monitor.plist"
+    if [ -f "$launchagent_file" ]; then
+        info "Unloading Fleet Monitor LaunchAgent..."
+        launchctl unload "$launchagent_file" 2>/dev/null || true
+        rm "$launchagent_file"
+    fi
+
+    # Stop and remove Tailscale Funnel LaunchAgent
+    local funnel_launchagent="$HOME/Library/LaunchAgents/com.devteam.tailscale-funnel.plist"
+    if [ -f "$funnel_launchagent" ]; then
+        info "Unloading Tailscale Funnel LaunchAgent..."
+        launchctl unload "$funnel_launchagent" 2>/dev/null || true
+        rm "$funnel_launchagent"
+    fi
+
+    # Remove Fleet Monitor directory
+    if [ -d "$DEV_TEAM_DIR/fleet-monitor" ]; then
+        info "Removing Fleet Monitor files..."
+        rm -rf "$DEV_TEAM_DIR/fleet-monitor"
+    fi
+
+    # Remove configuration files
+    rm -f "$DEV_TEAM_DIR/config/fleet-config.json"
+    rm -f "$DEV_TEAM_DIR/config/machine-identity.json"
+    rm -f "$DEV_TEAM_DIR/tailscale-funnel-restore.sh"
+
+    # Remove logs
+    rm -f "$DEV_TEAM_DIR/logs/fleet-monitor.log"
+    rm -f "$DEV_TEAM_DIR/logs/fleet-monitor.error.log"
+    rm -f "$DEV_TEAM_DIR/logs/tailscale-funnel.log"
+    rm -f "$DEV_TEAM_DIR/logs/tailscale-funnel.error.log"
+
+    success "Fleet Monitor uninstalled"
+}
+
+# If script is run directly (not sourced), execute install
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    install_fleet_monitor
+fi
