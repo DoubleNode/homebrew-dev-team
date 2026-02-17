@@ -3,7 +3,7 @@ class DevTeam < Formula
   homepage "https://github.com/DoubleNode/homebrew-dev-team"
   url "https://github.com/DoubleNode/homebrew-dev-team.git",
       tag: "v1.0.0",
-      revision: "b99bf324ac3fc18032af5ff0f96cc84ec050c5c8"
+      revision: "0492e40fe14a071cd34c4f55bd9d351b3e4f6c7d"
   license "MIT"
   version "1.0.0"
 

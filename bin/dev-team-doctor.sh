@@ -256,10 +256,11 @@ check_framework() {
 
   # Core directories exist
   local core_dirs=(
-    "scripts"
-    "config/templates"
+    "share/templates"
+    "share/teams"
     "docs"
-    "skills"
+    "libexec/commands"
+    "libexec/lib"
   )
 
   for dir in "${core_dirs[@]}"; do

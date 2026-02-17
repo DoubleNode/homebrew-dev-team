@@ -297,10 +297,10 @@ echo ""
 echo -e "${BLUE}Copying framework files...${NC}"
 echo ""
 
-# Copy core scripts
-cp -r "${DEV_TEAM_HOME}/config/templates" "${INSTALL_DIR}/templates"
-cp -r "${DEV_TEAM_HOME}/docs" "${INSTALL_DIR}/docs"
-cp -r "${DEV_TEAM_HOME}/skills" "${INSTALL_DIR}/skills"
+# Copy core files from framework to working directory
+[ -d "${DEV_TEAM_HOME}/share/templates" ] && cp -r "${DEV_TEAM_HOME}/share/templates" "${INSTALL_DIR}/templates"
+[ -d "${DEV_TEAM_HOME}/docs" ] && cp -r "${DEV_TEAM_HOME}/docs" "${INSTALL_DIR}/docs"
+[ -d "${DEV_TEAM_HOME}/share/teams" ] && cp -r "${DEV_TEAM_HOME}/share/teams" "${INSTALL_DIR}/teams"
 
 # Create configuration marker
 cat > "${INSTALL_DIR}/.dev-team-config" <<EOF
