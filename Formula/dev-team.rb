@@ -53,9 +53,11 @@ class DevTeam < Formula
   end
 
   def post_install
-    # Create installation marker
+    # Create installation marker (delete first to allow reinstall/upgrade)
+    marker = HOMEBREW_PREFIX/"var/dev-team/.installed"
     (HOMEBREW_PREFIX/"var/dev-team").mkpath
-    (HOMEBREW_PREFIX/"var/dev-team/.installed").write "#{version}\n#{Time.now}"
+    marker.delete if marker.exist?
+    marker.write "#{version}\n#{Time.now}"
 
     # Suggest running setup
     ohai "Dev-Team framework installed successfully"
