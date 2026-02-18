@@ -565,10 +565,12 @@ if [ -d "${DEV_TEAM_HOME}/share/skills" ]; then
   cp -r "${DEV_TEAM_HOME}/share/skills"/* "${INSTALL_DIR}/skills/" 2>/dev/null && echo -e "${GREEN}✓${NC} Skills (Kanban Manager, git-worktree, Project Planner)"
 fi
 
-# Copy agent personas and avatars for selected teams
+# Copy agent personas, avatars, and terminal logos for selected teams
 _personas_copied=0
+_logos_copied=0
 for team_id in "${SELECTED_TEAMS[@]}"; do
   [ -z "$team_id" ] && continue
+  # Agent personas and avatar thumbnails
   if [ -d "${DEV_TEAM_HOME}/share/personas/${team_id}" ]; then
     mkdir -p "${INSTALL_DIR}/${team_id}/personas/agents"
     mkdir -p "${INSTALL_DIR}/${team_id}/personas/avatars"
@@ -576,8 +578,15 @@ for team_id in "${SELECTED_TEAMS[@]}"; do
     cp "${DEV_TEAM_HOME}/share/personas/${team_id}/avatars/"*.png "${INSTALL_DIR}/${team_id}/personas/avatars/" 2>/dev/null
     _personas_copied=$((_personas_copied + 1))
   fi
+  # Terminal logos (for iTerm2 profiles)
+  if [ -d "${DEV_TEAM_HOME}/share/terminals/${team_id}/logos" ]; then
+    mkdir -p "${INSTALL_DIR}/${team_id}/terminals/logos"
+    cp "${DEV_TEAM_HOME}/share/terminals/${team_id}/logos/"*.png "${INSTALL_DIR}/${team_id}/terminals/logos/" 2>/dev/null
+    _logos_copied=$((_logos_copied + 1))
+  fi
 done
 [ $_personas_copied -gt 0 ] && echo -e "${GREEN}✓${NC} Agent personas and avatars (${_personas_copied} teams)"
+[ $_logos_copied -gt 0 ] && echo -e "${GREEN}✓${NC} Terminal logos (${_logos_copied} teams)"
 echo ""
 
 # -----------------------------------------------------------------------
