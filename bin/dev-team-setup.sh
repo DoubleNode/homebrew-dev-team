@@ -379,6 +379,35 @@ fi
 echo ""
 echo -e "${GREEN}✓${NC} Selected teams: ${SELECTED_TEAMS[*]}"
 
+# -----------------------------------------------------------------------
+# For project-based teams (legal, medical), ask which project
+# -----------------------------------------------------------------------
+declare -A TEAM_PROJECT_MAP  # team_id -> project_name (empty if not project-based)
+declare -A TEAM_WORKING_DIRS # team_id -> resolved working directory
+
+for team_id in "${SELECTED_TEAMS[@]}"; do
+  conf_file="${TEAMS_DIR}/${team_id}.conf"
+  [ -f "$conf_file" ] || continue
+
+  has_projects="$(grep '^TEAM_HAS_PROJECTS=' "$conf_file" | head -1 | cut -d'"' -f2)"
+  working_dir="$(grep '^TEAM_WORKING_DIR=' "$conf_file" | head -1 | cut -d'"' -f2)"
+  working_dir="${working_dir/\$HOME/$HOME}" # Expand $HOME
+
+  if [ "$has_projects" = "true" ]; then
+    default_project="$(grep '^TEAM_DEFAULT_PROJECT=' "$conf_file" | head -1 | cut -d'"' -f2)"
+    echo ""
+    echo -e "${CYAN}${team_id}${NC} uses project-based organization (e.g., ~/legal/coparenting/)"
+    read -p "  Project name for ${team_id} [${default_project}]: " project_name
+    project_name="${project_name:-$default_project}"
+    TEAM_PROJECT_MAP[$team_id]="$project_name"
+    TEAM_WORKING_DIRS[$team_id]="${working_dir}/${project_name}"
+    echo -e "  ${GREEN}✓${NC} ${team_id} project: ${working_dir}/${project_name}"
+  else
+    TEAM_PROJECT_MAP[$team_id]=""
+    TEAM_WORKING_DIRS[$team_id]="$working_dir"
+  fi
+done
+
 # ═══════════════════════════════════════════════════════════════════════════
 # STEP 3: FEATURE SELECTION
 # ═══════════════════════════════════════════════════════════════════════════
@@ -514,16 +543,18 @@ echo -e "${BOLD}Installing teams...${NC}"
 echo ""
 
 for team_id in "${SELECTED_TEAMS[@]}"; do
-  echo -e "${BLUE}  Installing team: ${team_id}${NC}"
+  team_work_dir="${TEAM_WORKING_DIRS[$team_id]:-${INSTALL_DIR}/${team_id}}"
+  team_project="${TEAM_PROJECT_MAP[$team_id]:-}"
+  echo -e "${BLUE}  Installing team: ${team_id} → ${team_work_dir}${NC}"
   if [ -x "${INSTALLERS_DIR}/install-team.sh" ]; then
-    DEV_TEAM_DIR="${INSTALL_DIR}" bash "${INSTALLERS_DIR}/install-team.sh" "$team_id" --dev-team-dir "${INSTALL_DIR}" 2>&1 | sed 's/^/    /' || {
+    DEV_TEAM_DIR="${INSTALL_DIR}" TEAM_WORKING_DIR="${team_work_dir}" bash "${INSTALLERS_DIR}/install-team.sh" "$team_id" --dev-team-dir "${INSTALL_DIR}" 2>&1 | sed 's/^/    /' || {
       echo -e "    ${RED}✗ Team ${team_id} had errors (continuing)${NC}"
       INSTALL_ERRORS=$((INSTALL_ERRORS + 1))
     }
   else
     # Fallback: create basic team directory structure
-    mkdir -p "${INSTALL_DIR}/${team_id}"
-    echo -e "    ${GREEN}✓${NC} Created ${team_id}/ directory"
+    mkdir -p "${team_work_dir}"
+    echo -e "    ${GREEN}✓${NC} Created ${team_work_dir}/ directory"
   fi
   echo ""
 done
@@ -578,10 +609,16 @@ fi
 if [ "$INSTALL_KANBAN" = "yes" ]; then
   echo -e "${BOLD}Installing LCARS Kanban System...${NC}"
   if [ -f "${INSTALLERS_DIR}/install-kanban.sh" ]; then
+    # Serialize team working dirs as "team:path team:path ..."
+    _team_dirs=""
+    for _tid in "${SELECTED_TEAMS[@]}"; do
+      _team_dirs="${_team_dirs}${_tid}:${TEAM_WORKING_DIRS[$_tid]:-${INSTALL_DIR}/${_tid}} "
+    done
     (
       export DEV_TEAM_DIR="${INSTALL_DIR}"
       export INSTALL_ROOT="${DEV_TEAM_HOME}"
       export SELECTED_TEAMS="${SELECTED_TEAMS[*]}"
+      export TEAM_WORKING_DIRS_STR="${_team_dirs}"
       source "${DEV_TEAM_HOME}/libexec/lib/common.sh"
       source "${INSTALLERS_DIR}/install-kanban.sh"
       install_kanban_system
@@ -637,6 +674,17 @@ cat > "${INSTALL_DIR}/.dev-team-config" <<EOF
   "framework_home": "${DEV_TEAM_HOME}",
   "machine_name": "${MACHINE_NAME}",
   "teams": [$(printf '"%s",' "${SELECTED_TEAMS[@]}" | sed 's/,$//')],
+  "team_paths": {$(
+    for _tid in "${SELECTED_TEAMS[@]}"; do
+      _proj="${TEAM_PROJECT_MAP[$_tid]:-}"
+      _wdir="${TEAM_WORKING_DIRS[$_tid]:-}"
+      if [ -n "$_proj" ]; then
+        printf '"%s": {"working_dir": "%s", "project": "%s"},' "$_tid" "$_wdir" "$_proj"
+      else
+        printf '"%s": {"working_dir": "%s"},' "$_tid" "$_wdir"
+      fi
+    done | sed 's/,$//'
+  )},
   "features": {
     "shell_environment": $(to_json_bool "$INSTALL_SHELL"),
     "claude_code_config": $(to_json_bool "$INSTALL_CLAUDE"),

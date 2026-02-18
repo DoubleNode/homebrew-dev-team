@@ -20,34 +20,40 @@ DEFAULT_LCARS_PORT=8080
 # Helper Functions
 #──────────────────────────────────────────────────────────────────────────────
 
+# Parse team working dirs from serialized env var (team:path team:path ...)
+declare -A TEAM_DIR_MAP
+if [ -n "${TEAM_WORKING_DIRS_STR:-}" ]; then
+    for entry in $TEAM_WORKING_DIRS_STR; do
+        _key="${entry%%:*}"
+        _val="${entry#*:}"
+        TEAM_DIR_MAP[$_key]="$_val"
+    done
+fi
+
 # Get kanban directory for a specific team
 get_team_kanban_dir() {
     local team="$1"
 
-    case "$team" in
-        academy)
-            echo "$DEV_TEAM_DIR/kanban"
-            ;;
-        ios)
-            echo "/Users/Shared/Development/Main Event/MainEventApp-iOS/kanban"
-            ;;
-        android)
-            echo "/Users/Shared/Development/Main Event/MainEventApp-Android/kanban"
-            ;;
-        firebase)
-            echo "/Users/Shared/Development/Main Event/MainEventApp-Functions/kanban"
-            ;;
-        command)
-            echo "/Users/Shared/Development/Main Event/dev-team/kanban"
-            ;;
-        dns)
-            echo "/Users/Shared/Development/DNSFramework/kanban"
-            ;;
-        *)
-            # Unknown teams go to dev-team (safe default)
-            echo "$DEV_TEAM_DIR/kanban"
-            ;;
-    esac
+    # Use working dir from wizard if available
+    if [ -n "${TEAM_DIR_MAP[$team]:-}" ]; then
+        echo "${TEAM_DIR_MAP[$team]}/kanban"
+        return
+    fi
+
+    # Fallback: read from team conf file
+    local conf_file="$INSTALL_ROOT/share/teams/${team}.conf"
+    if [ -f "$conf_file" ]; then
+        local working_dir
+        working_dir="$(grep '^TEAM_WORKING_DIR=' "$conf_file" | head -1 | cut -d'"' -f2)"
+        working_dir="${working_dir/\$HOME/$HOME}"
+        if [ -n "$working_dir" ]; then
+            echo "${working_dir}/kanban"
+            return
+        fi
+    fi
+
+    # Last resort: under dev-team dir
+    echo "$DEV_TEAM_DIR/${team}/kanban"
 }
 
 # Initialize empty kanban board for a team
@@ -56,7 +62,22 @@ init_kanban_board() {
     local kanban_dir
     kanban_dir="$(get_team_kanban_dir "$team")"
 
-    local board_file="$kanban_dir/${team}-board.json"
+    # For project-based teams, include project name in board filename
+    # e.g., ~/legal/coparenting/kanban/ → legal-coparenting-board.json
+    local working_dir="${TEAM_DIR_MAP[$team]:-}"
+    local parent_dir
+    parent_dir="$(dirname "$kanban_dir")"
+    local project_name
+    project_name="$(basename "$parent_dir")"
+    local board_name="${team}"
+
+    # Check if this is a project-based team (working dir ends with a project folder)
+    local conf_file="$INSTALL_ROOT/share/teams/${team}.conf"
+    if [ -f "$conf_file" ] && grep -q 'TEAM_HAS_PROJECTS="true"' "$conf_file"; then
+        board_name="${team}-${project_name}"
+    fi
+
+    local board_file="$kanban_dir/${board_name}-board.json"
 
     # Create kanban directory if it doesn't exist
     mkdir -p "$kanban_dir"
@@ -75,7 +96,7 @@ init_kanban_board() {
             # Fallback to minimal structure
             cat > "$board_file" << EOF
 {
-  "name": "$team",
+  "name": "$board_name",
   "items": [],
   "backlog": [],
   "blocked": []
