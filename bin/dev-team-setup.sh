@@ -340,9 +340,9 @@ for conf_file in "${TEAMS_DIR}"/*.conf; do
   tid="$(basename "$conf_file" .conf)"
 
   # Read team name and description from conf
-  tname="$(grep '^TEAM_NAME=' "$conf_file" | head -1 | cut -d'"' -f2)"
-  tdesc="$(grep '^TEAM_DESCRIPTION=' "$conf_file" | head -1 | cut -d'"' -f2)"
-  tcat="$(grep '^TEAM_CATEGORY=' "$conf_file" | head -1 | cut -d'"' -f2)"
+  tname="$(grep '^TEAM_NAME=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
+  tdesc="$(grep '^TEAM_DESCRIPTION=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
+  tcat="$(grep '^TEAM_CATEGORY=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
 
   AVAILABLE_TEAMS+=("$tid")
   TEAM_LABELS+=("${tid} - ${tname} (${tdesc})")
@@ -389,15 +389,15 @@ for team_id in "${SELECTED_TEAMS[@]}"; do
   conf_file="${TEAMS_DIR}/${team_id}.conf"
   [ -f "$conf_file" ] || continue
 
-  has_projects="$(grep '^TEAM_HAS_PROJECTS=' "$conf_file" | head -1 | cut -d'"' -f2)"
-  requires_client="$(grep '^TEAM_REQUIRES_CLIENT_ID=' "$conf_file" | head -1 | cut -d'"' -f2)"
-  working_dir="$(grep '^TEAM_WORKING_DIR=' "$conf_file" | head -1 | cut -d'"' -f2)"
+  has_projects="$(grep '^TEAM_HAS_PROJECTS=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
+  requires_client="$(grep '^TEAM_REQUIRES_CLIENT_ID=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
+  working_dir="$(grep '^TEAM_WORKING_DIR=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
   working_dir="${working_dir/\$HOME/$HOME}" # Expand $HOME
 
   if [ "$requires_client" = "true" ]; then
     # Team requires ClientID + ProjectID (e.g., freelance)
-    default_project="$(grep '^TEAM_DEFAULT_PROJECT=' "$conf_file" | head -1 | cut -d'"' -f2)"
-    team_name="$(grep '^TEAM_NAME=' "$conf_file" | head -1 | cut -d'"' -f2)"
+    default_project="$(grep '^TEAM_DEFAULT_PROJECT=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
+    team_name="$(grep '^TEAM_NAME=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
     echo ""
     echo -e "${CYAN}${team_name}${NC} requires client and project identifiers"
     echo -e "  (e.g., client=acme, project=mobile-app → ${working_dir}/acme/mobile-app/)"
@@ -417,8 +417,8 @@ for team_id in "${SELECTED_TEAMS[@]}"; do
 
   elif [ "$has_projects" = "true" ]; then
     # Team requires ProjectID only (e.g., legal, medical)
-    default_project="$(grep '^TEAM_DEFAULT_PROJECT=' "$conf_file" | head -1 | cut -d'"' -f2)"
-    team_name="$(grep '^TEAM_NAME=' "$conf_file" | head -1 | cut -d'"' -f2)"
+    default_project="$(grep '^TEAM_DEFAULT_PROJECT=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
+    team_name="$(grep '^TEAM_NAME=' "$conf_file" 2>/dev/null | head -1 | cut -d'"' -f2 || true)"
     echo ""
     echo -e "${CYAN}${team_name}${NC} uses project-based organization"
     read -p "  Project ID [${default_project}]: " project_id
