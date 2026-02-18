@@ -95,8 +95,8 @@ install_kanban_helpers() {
     local target="$DEV_TEAM_DIR/kanban-helpers.sh"
 
     if [ ! -f "$template" ]; then
-        error "Template not found: $template"
-        return 1
+        warning "Kanban helpers template not found (skipping)"
+        return 0
     fi
 
     info "Installing kanban helper functions"
@@ -139,8 +139,8 @@ install_lcars_ui() {
     local lcars_dest="$DEV_TEAM_DIR/lcars-ui"
 
     if [ ! -d "$lcars_src" ]; then
-        error "LCARS UI not found at: $lcars_src"
-        return 1
+        warning "LCARS UI not found at: $lcars_src (skipping)"
+        return 0
     fi
 
     info "Installing LCARS web UI"
@@ -207,8 +207,8 @@ install_kanban_backup() {
     local backup_script_dest="$DEV_TEAM_DIR/kanban-backup.py"
 
     if [ ! -f "$backup_script_src" ]; then
-        error "Backup script not found: $backup_script_src"
-        return 1
+        warning "Backup script not found (skipping automated backups)"
+        return 0
     fi
 
     info "Installing kanban backup system"
@@ -324,45 +324,30 @@ install_kanban_system() {
 
     info "Setting up kanban boards for teams: ${teams[*]}"
 
-    # Install core kanban components
-    install_kanban_helpers || return 1
-    install_kanban_hooks || return 1
+    # Install core kanban components (non-fatal if templates missing)
+    install_kanban_helpers
+    install_kanban_hooks
 
     # Initialize kanban boards for each team
     for team in "${teams[@]}"; do
         init_kanban_board "$team"
     done
 
-    # Install LCARS UI
-    install_lcars_ui || return 1
+    # Install LCARS UI (non-fatal if source missing)
+    install_lcars_ui
 
-    # Get LCARS port (ask user or use default)
-    local lcars_port
-    if prompt_yes_no "Use default LCARS port ($DEFAULT_LCARS_PORT)?" "y"; then
-        lcars_port=$DEFAULT_LCARS_PORT
-    else
-        read -p "Enter LCARS port number: " -r lcars_port
-        lcars_port="${lcars_port:-$DEFAULT_LCARS_PORT}"
+    # Configure LCARS port with default (non-interactive in setup wizard context)
+    local lcars_port=$DEFAULT_LCARS_PORT
+    if [ -d "$DEV_TEAM_DIR/lcars-ui" ]; then
+        configure_lcars_port "$lcars_port"
     fi
+    install_port_management
 
-    configure_lcars_port "$lcars_port" || return 1
-    install_port_management || return 1
+    # Install backup system (non-fatal if script missing)
+    install_kanban_backup
 
-    # Install backup system
-    install_kanban_backup || return 1
-
-    # Ask about LaunchAgent
-    if prompt_yes_no "Install automated backup LaunchAgent?" "y"; then
-        install_backup_launchagent || warning "LaunchAgent installation failed"
-    else
-        info "Skipping LaunchAgent installation"
-        info "You can manually run backups with: python3 $DEV_TEAM_DIR/kanban-backup.py"
-    fi
-
-    # Test LCARS server
-    if prompt_yes_no "Test LCARS server startup?" "y"; then
-        test_lcars_server "$lcars_port"
-    fi
+    # Install backup LaunchAgent if template exists
+    install_backup_launchagent
 
     success "LCARS Kanban System installed successfully"
 

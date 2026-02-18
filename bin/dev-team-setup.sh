@@ -515,7 +515,7 @@ if [ "$INSTALL_CLAUDE" = "yes" ]; then
     (
       export DEV_TEAM_DIR="${INSTALL_DIR}"
       export INSTALL_ROOT="${DEV_TEAM_HOME}"
-      export TEMPLATE_DIR="${DEV_TEAM_HOME}/share/templates/claude"
+      export TEMPLATE_DIR="${DEV_TEAM_HOME}/share/templates"
       bash "${INSTALLERS_DIR}/install-claude-config.sh"
     ) 2>&1 | sed 's/^/  /' || {
       echo -e "  ${RED}✗ Claude config had errors${NC}"
