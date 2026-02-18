@@ -288,8 +288,10 @@ find_tmux_sockets() {
         done
     fi
 
-    # Return sockets, one per line
-    printf '%s\n' "${sockets[@]}"
+    # Return sockets, one per line (guard for empty array with set -u)
+    if [ ${#sockets[@]} -gt 0 ]; then
+        printf '%s\n' "${sockets[@]}"
+    fi
 }
 
 # Get tmux session information from all sockets
@@ -508,9 +510,9 @@ send_status() {
         fi
 
         if send_to_endpoint "$payload" "$endpoint" "$auth"; then
-            ((success_count++))
+            success_count=$((success_count + 1))
         else
-            ((fail_count++))
+            fail_count=$((fail_count + 1))
         fi
     done
 
