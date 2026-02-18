@@ -110,8 +110,8 @@ start_lcars() {
     return 1
   fi
 
-  # Check if already running
-  if curl -s -f http://localhost:${port}/health &>/dev/null; then
+  # Check if already running (try root URL — server has no /health endpoint)
+  if curl -s -o /dev/null -w '%{http_code}' http://localhost:${port}/ 2>/dev/null | grep -q '200'; then
     print_warning "LCARS server already running on port ${port}"
     return 0
   fi
@@ -123,11 +123,11 @@ start_lcars() {
   nohup python3 server.py "$port" > /tmp/lcars-server.log 2>&1 &
   local pid=$!
 
-  # Wait a moment for startup
-  sleep 2
+  # Wait for startup
+  sleep 3
 
-  # Check if it started successfully
-  if curl -s -f http://localhost:${port}/health &>/dev/null; then
+  # Check if process is still alive (confirms no crash on startup)
+  if kill -0 "$pid" 2>/dev/null; then
     print_success "LCARS server started (PID: ${pid})"
     print_info "Access at: http://localhost:${port}"
 

@@ -231,19 +231,20 @@ check_framework() {
     return
   fi
 
-  # Core scripts exist
-  local core_scripts=(
-    "kanban-helpers.sh"
-    "worktree-helpers.sh"
-    "claude_agent_aliases.sh"
-    "claude_code_cc_aliases.sh"
+  # Core templates exist in framework
+  local core_templates=(
+    "share/templates/kanban/kanban-helpers.template.sh"
+    "share/templates/aliases/agent-aliases.sh"
+    "share/templates/aliases/worktree-aliases.sh"
   )
 
-  for script in "${core_scripts[@]}"; do
-    if [ -f "${framework_dir}/${script}" ]; then
-      check_result pass "${script}"
+  for tmpl in "${core_templates[@]}"; do
+    local tmpl_name
+    tmpl_name="$(basename "$tmpl")"
+    if [ -f "${framework_dir}/${tmpl}" ]; then
+      check_result pass "${tmpl_name} (template)"
     else
-      check_result fail "${script} missing"
+      check_result warn "${tmpl_name} template missing"
     fi
   done
 
@@ -335,9 +336,15 @@ check_config() {
 check_services() {
   print_section "Checking Services"
 
-  # LCARS Kanban server
-  if curl -s -f http://localhost:8082/health &>/dev/null; then
-    check_result pass "LCARS Kanban server (port 8082)"
+  # LCARS Kanban server — read port from config, check root URL (no /health endpoint)
+  local lcars_port=8080
+  local lcars_working_dir
+  lcars_working_dir=$(get_working_dir)
+  if [ -f "${lcars_working_dir}/lcars-ui/.lcars-port" ]; then
+    lcars_port="$(cat "${lcars_working_dir}/lcars-ui/.lcars-port" 2>/dev/null || echo 8080)"
+  fi
+  if curl -s -o /dev/null -w '%{http_code}' "http://localhost:${lcars_port}/" 2>/dev/null | grep -q '200'; then
+    check_result pass "LCARS Kanban server (port ${lcars_port})"
   else
     check_result warn "LCARS Kanban server not running"
     if [ "$VERBOSE" = true ]; then
