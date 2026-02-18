@@ -41,8 +41,14 @@ get_installed_version() {
 }
 
 # Get installation date
+# Supports both "install_date" (bin/dev-team-setup.sh) and "installed_at" (wizard) formats
 get_install_date() {
-  get_config_value "installed_date"
+  local result
+  result=$(get_config_value "install_date")
+  if [ -z "$result" ]; then
+    result=$(get_config_value "installed_at")
+  fi
+  echo "$result"
 }
 
 # Get configured teams (returns space-separated list)
@@ -63,13 +69,35 @@ get_configured_teams() {
 }
 
 # Get machine name
+# Supports both "machine_name" (bin/dev-team-setup.sh) and "machine.name" (wizard) formats
 get_machine_name() {
-  get_config_value "machine.name"
+  local result
+  result=$(get_config_value "machine_name")
+  if [ -z "$result" ]; then
+    result=$(get_config_value "machine.name")
+  fi
+  if [ -z "$result" ]; then
+    # Fallback to hostname
+    hostname -s 2>/dev/null
+  else
+    echo "$result"
+  fi
 }
 
 # Get machine ID
+# Falls back to hostname if not set in config
 get_machine_id() {
-  get_config_value "machine.id"
+  local result
+  result=$(get_config_value "machine_id")
+  if [ -z "$result" ]; then
+    result=$(get_config_value "machine.id")
+  fi
+  if [ -z "$result" ]; then
+    # Fallback: generate from hostname
+    hostname -s 2>/dev/null
+  else
+    echo "$result"
+  fi
 }
 
 # Validate config structure

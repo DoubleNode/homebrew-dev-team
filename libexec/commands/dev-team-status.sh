@@ -110,22 +110,43 @@ gather_status_data() {
   # Teams
   CONFIGURED_TEAMS=$(get_configured_teams)
 
-  # Services status
+  # Services status — read LCARS port from config, default to 8080
   LCARS_RUNNING=false
-  LCARS_PORT=8082
-  if curl -s -f http://localhost:${LCARS_PORT}/health &>/dev/null; then
+  LCARS_PORT=8080
+  if [ -f "${WORKING_DIR}/lcars-ui/.lcars-port" ]; then
+    LCARS_PORT="$(cat "${WORKING_DIR}/lcars-ui/.lcars-port" 2>/dev/null || echo 8080)"
+  fi
+  if curl -s -o /dev/null -w '%{http_code}' "http://localhost:${LCARS_PORT}/" 2>/dev/null | grep -q '200'; then
     LCARS_RUNNING=true
   fi
 
+  # Fleet Monitor — check server AND client (reporter)
   FLEET_RUNNING=false
   FLEET_PORT=""
-  for port in 3000 3001 3002; do
-    if curl -s -f http://localhost:${port}/health &>/dev/null 2>&1; then
-      FLEET_RUNNING=true
-      FLEET_PORT=$port
-      break
-    fi
-  done
+  FLEET_HAS_SERVER=false
+  FLEET_REPORTER_INSTALLED=false
+  FLEET_REPORTER_AGENT_LOADED=false
+
+  if [ -d "${WORKING_DIR}/fleet-monitor/server" ]; then
+    FLEET_HAS_SERVER=true
+    for port in 3000 3001 3002; do
+      if curl -s -o /dev/null -w '%{http_code}' "http://localhost:${port}/" 2>/dev/null | grep -q '200'; then
+        FLEET_RUNNING=true
+        FLEET_PORT=$port
+        break
+      fi
+    done
+  fi
+
+  # Fleet reporter client
+  if [ -f "${WORKING_DIR}/fleet-monitor/client/fleet-reporter.sh" ]; then
+    FLEET_REPORTER_INSTALLED=true
+  fi
+
+  # Fleet reporter LaunchAgent
+  if launchctl list 2>/dev/null | grep -q "com.devteam.fleet-reporter"; then
+    FLEET_REPORTER_AGENT_LOADED=true
+  fi
 
   # LaunchAgents status
   KANBAN_BACKUP_AGENT_LOADED=false
@@ -204,13 +225,16 @@ output_json() {
       "port": ${LCARS_PORT}
     },
     "fleet_monitor": {
-      "running": ${FLEET_RUNNING},
-      "port": "${FLEET_PORT}"
+      "server_running": ${FLEET_RUNNING},
+      "server_port": "${FLEET_PORT}",
+      "reporter_installed": ${FLEET_REPORTER_INSTALLED},
+      "reporter_agent_loaded": ${FLEET_REPORTER_AGENT_LOADED}
     }
   },
   "launchagents": {
     "kanban_backup": ${KANBAN_BACKUP_AGENT_LOADED},
-    "lcars_health": ${LCARS_HEALTH_AGENT_LOADED}
+    "lcars_health": ${LCARS_HEALTH_AGENT_LOADED},
+    "fleet_reporter": ${FLEET_REPORTER_AGENT_LOADED}
   },
   "worktrees": {
     "count": ${WORKTREE_COUNT}
@@ -278,11 +302,21 @@ output_full() {
     print_error "LCARS Kanban Server (not running)"
   fi
 
-  if [ -d "${WORKING_DIR}/fleet-monitor" ]; then
+  # Fleet Monitor server (only if server directory exists)
+  if [ "$FLEET_HAS_SERVER" = true ]; then
     if [ "$FLEET_RUNNING" = true ]; then
-      print_success "Fleet Monitor (port ${FLEET_PORT})"
+      print_success "Fleet Monitor Server (port ${FLEET_PORT})"
     else
-      print_error "Fleet Monitor (not running)"
+      print_error "Fleet Monitor Server (not running)"
+    fi
+  fi
+
+  # Fleet reporter client
+  if [ "$FLEET_REPORTER_INSTALLED" = true ]; then
+    if [ "$FLEET_REPORTER_AGENT_LOADED" = true ]; then
+      print_success "Fleet Reporter (active)"
+    else
+      print_warning "Fleet Reporter (installed, agent not loaded)"
     fi
   fi
 
@@ -301,6 +335,10 @@ output_full() {
     print_success "LCARS Health Monitor"
   else
     print_warning "LCARS Health Monitor (not loaded)"
+  fi
+
+  if [ "$FLEET_REPORTER_AGENT_LOADED" = true ]; then
+    print_success "Fleet Reporter Agent (60s interval)"
   fi
 
   echo ""
