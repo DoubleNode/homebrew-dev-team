@@ -21,12 +21,12 @@ DEFAULT_LCARS_PORT=8080
 #──────────────────────────────────────────────────────────────────────────────
 
 # Parse team working dirs from serialized env var (team:path team:path ...)
-declare -A TEAM_DIR_MAP
+# Bash 3.2 compatible — uses eval instead of associative arrays
 if [ -n "${TEAM_WORKING_DIRS_STR:-}" ]; then
     for entry in $TEAM_WORKING_DIRS_STR; do
         _key="${entry%%:*}"
         _val="${entry#*:}"
-        TEAM_DIR_MAP[$_key]="$_val"
+        eval "_TDIR_${_key}=\"${_val}\""
     done
 fi
 
@@ -35,8 +35,10 @@ get_team_kanban_dir() {
     local team="$1"
 
     # Use working dir from wizard if available
-    if [ -n "${TEAM_DIR_MAP[$team]:-}" ]; then
-        echo "${TEAM_DIR_MAP[$team]}/kanban"
+    local wizard_dir=""
+    eval "wizard_dir=\"\${_TDIR_${team}:-}\""
+    if [ -n "$wizard_dir" ]; then
+        echo "${wizard_dir}/kanban"
         return
     fi
 
@@ -64,7 +66,8 @@ init_kanban_board() {
 
     # For project-based teams, include project name in board filename
     # e.g., ~/legal/coparenting/kanban/ → legal-coparenting-board.json
-    local working_dir="${TEAM_DIR_MAP[$team]:-}"
+    local working_dir=""
+    eval "working_dir=\"\${_TDIR_${team}:-}\""
     local parent_dir
     parent_dir="$(dirname "$kanban_dir")"
     local project_name

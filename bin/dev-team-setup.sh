@@ -380,31 +380,55 @@ echo ""
 echo -e "${GREEN}✓${NC} Selected teams: ${SELECTED_TEAMS[*]}"
 
 # -----------------------------------------------------------------------
-# For project-based teams (legal, medical), ask which project
+# For project-based teams, ask for ClientID and/or ProjectID
+# Uses eval instead of declare -A (bash 3.2 compatible)
+# Variables: _PROJECT_<team_id>, _WORKDIR_<team_id>, _CLIENT_<team_id>
 # -----------------------------------------------------------------------
-declare -A TEAM_PROJECT_MAP  # team_id -> project_name (empty if not project-based)
-declare -A TEAM_WORKING_DIRS # team_id -> resolved working directory
 
 for team_id in "${SELECTED_TEAMS[@]}"; do
   conf_file="${TEAMS_DIR}/${team_id}.conf"
   [ -f "$conf_file" ] || continue
 
   has_projects="$(grep '^TEAM_HAS_PROJECTS=' "$conf_file" | head -1 | cut -d'"' -f2)"
+  requires_client="$(grep '^TEAM_REQUIRES_CLIENT_ID=' "$conf_file" | head -1 | cut -d'"' -f2)"
   working_dir="$(grep '^TEAM_WORKING_DIR=' "$conf_file" | head -1 | cut -d'"' -f2)"
   working_dir="${working_dir/\$HOME/$HOME}" # Expand $HOME
 
-  if [ "$has_projects" = "true" ]; then
+  if [ "$requires_client" = "true" ]; then
+    # Team requires ClientID + ProjectID (e.g., freelance)
     default_project="$(grep '^TEAM_DEFAULT_PROJECT=' "$conf_file" | head -1 | cut -d'"' -f2)"
+    team_name="$(grep '^TEAM_NAME=' "$conf_file" | head -1 | cut -d'"' -f2)"
     echo ""
-    echo -e "${CYAN}${team_id}${NC} uses project-based organization (e.g., ~/legal/coparenting/)"
-    read -p "  Project name for ${team_id} [${default_project}]: " project_name
-    project_name="${project_name:-$default_project}"
-    TEAM_PROJECT_MAP[$team_id]="$project_name"
-    TEAM_WORKING_DIRS[$team_id]="${working_dir}/${project_name}"
-    echo -e "  ${GREEN}✓${NC} ${team_id} project: ${working_dir}/${project_name}"
+    echo -e "${CYAN}${team_name}${NC} requires client and project identifiers"
+    echo -e "  (e.g., client=acme, project=mobile-app → ${working_dir}/acme/mobile-app/)"
+    read -p "  Client ID: " client_id
+    if [ -z "$client_id" ]; then
+      echo -e "  ${RED}Client ID is required. Skipping ${team_id}.${NC}"
+      # Remove from selected teams
+      SELECTED_TEAMS=("${SELECTED_TEAMS[@]/$team_id}")
+      continue
+    fi
+    read -p "  Project ID [${default_project}]: " project_id
+    project_id="${project_id:-$default_project}"
+    eval "_PROJECT_${team_id}=\"${project_id}\""
+    eval "_CLIENT_${team_id}=\"${client_id}\""
+    eval "_WORKDIR_${team_id}=\"${working_dir}/${client_id}/${project_id}\""
+    echo -e "  ${GREEN}✓${NC} ${team_id}: ${working_dir}/${client_id}/${project_id}"
+
+  elif [ "$has_projects" = "true" ]; then
+    # Team requires ProjectID only (e.g., legal, medical)
+    default_project="$(grep '^TEAM_DEFAULT_PROJECT=' "$conf_file" | head -1 | cut -d'"' -f2)"
+    team_name="$(grep '^TEAM_NAME=' "$conf_file" | head -1 | cut -d'"' -f2)"
+    echo ""
+    echo -e "${CYAN}${team_name}${NC} uses project-based organization"
+    read -p "  Project ID [${default_project}]: " project_id
+    project_id="${project_id:-$default_project}"
+    eval "_PROJECT_${team_id}=\"${project_id}\""
+    eval "_WORKDIR_${team_id}=\"${working_dir}/${project_id}\""
+    echo -e "  ${GREEN}✓${NC} ${team_id}: ${working_dir}/${project_id}"
+
   else
-    TEAM_PROJECT_MAP[$team_id]=""
-    TEAM_WORKING_DIRS[$team_id]="$working_dir"
+    eval "_WORKDIR_${team_id}=\"${working_dir}\""
   fi
 done
 
@@ -543,8 +567,9 @@ echo -e "${BOLD}Installing teams...${NC}"
 echo ""
 
 for team_id in "${SELECTED_TEAMS[@]}"; do
-  team_work_dir="${TEAM_WORKING_DIRS[$team_id]:-${INSTALL_DIR}/${team_id}}"
-  team_project="${TEAM_PROJECT_MAP[$team_id]:-}"
+  [ -z "$team_id" ] && continue  # skip empty entries from removed teams
+  eval "team_work_dir=\"\${_WORKDIR_${team_id}:-${INSTALL_DIR}/${team_id}}\""
+  eval "team_project=\"\${_PROJECT_${team_id}:-}\""
   echo -e "${BLUE}  Installing team: ${team_id} → ${team_work_dir}${NC}"
   if [ -x "${INSTALLERS_DIR}/install-team.sh" ]; then
     DEV_TEAM_DIR="${INSTALL_DIR}" TEAM_WORKING_DIR="${team_work_dir}" bash "${INSTALLERS_DIR}/install-team.sh" "$team_id" --dev-team-dir "${INSTALL_DIR}" 2>&1 | sed 's/^/    /' || {
@@ -612,7 +637,9 @@ if [ "$INSTALL_KANBAN" = "yes" ]; then
     # Serialize team working dirs as "team:path team:path ..."
     _team_dirs=""
     for _tid in "${SELECTED_TEAMS[@]}"; do
-      _team_dirs="${_team_dirs}${_tid}:${TEAM_WORKING_DIRS[$_tid]:-${INSTALL_DIR}/${_tid}} "
+      [ -z "$_tid" ] && continue
+      eval "_tw=\"\${_WORKDIR_${_tid}:-${INSTALL_DIR}/${_tid}}\""
+      _team_dirs="${_team_dirs}${_tid}:${_tw} "
     done
     (
       export DEV_TEAM_DIR="${INSTALL_DIR}"
@@ -673,13 +700,17 @@ cat > "${INSTALL_DIR}/.dev-team-config" <<EOF
   "install_dir": "${INSTALL_DIR}",
   "framework_home": "${DEV_TEAM_HOME}",
   "machine_name": "${MACHINE_NAME}",
-  "teams": [$(printf '"%s",' "${SELECTED_TEAMS[@]}" | sed 's/,$//')],
+  "teams": [$(printf '"%s",' "${SELECTED_TEAMS[@]}" | sed 's/,""//' | sed 's/,$//')],
   "team_paths": {$(
     for _tid in "${SELECTED_TEAMS[@]}"; do
-      _proj="${TEAM_PROJECT_MAP[$_tid]:-}"
-      _wdir="${TEAM_WORKING_DIRS[$_tid]:-}"
-      if [ -n "$_proj" ]; then
-        printf '"%s": {"working_dir": "%s", "project": "%s"},' "$_tid" "$_wdir" "$_proj"
+      [ -z "$_tid" ] && continue
+      eval "_proj=\"\${_PROJECT_${_tid}:-}\""
+      eval "_wdir=\"\${_WORKDIR_${_tid}:-}\""
+      eval "_client=\"\${_CLIENT_${_tid}:-}\""
+      if [ -n "$_client" ] && [ -n "$_proj" ]; then
+        printf '"%s": {"working_dir": "%s", "client_id": "%s", "project_id": "%s"},' "$_tid" "$_wdir" "$_client" "$_proj"
+      elif [ -n "$_proj" ]; then
+        printf '"%s": {"working_dir": "%s", "project_id": "%s"},' "$_tid" "$_wdir" "$_proj"
       else
         printf '"%s": {"working_dir": "%s"},' "$_tid" "$_wdir"
       fi
