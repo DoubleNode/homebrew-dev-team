@@ -98,7 +98,12 @@ start_lcars() {
   print_section "Starting LCARS Kanban Server"
 
   local lcars_dir="${WORKING_DIR}/lcars-ui"
-  local port=8082
+
+  # Read port from config file (set by install-kanban.sh), default to 8080
+  local port=8080
+  if [ -f "${lcars_dir}/.lcars-port" ]; then
+    port="$(cat "${lcars_dir}/.lcars-port" 2>/dev/null || echo 8080)"
+  fi
 
   if [ ! -d "$lcars_dir" ]; then
     print_error "LCARS UI not found: ${lcars_dir}"
@@ -115,7 +120,7 @@ start_lcars() {
   print_info "Starting LCARS server on port ${port}..."
 
   cd "$lcars_dir"
-  nohup python3 server.py > /tmp/lcars-server.log 2>&1 &
+  nohup python3 server.py "$port" > /tmp/lcars-server.log 2>&1 &
   local pid=$!
 
   # Wait a moment for startup
