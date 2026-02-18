@@ -6,7 +6,10 @@
 # Ensure PATH includes common locations (cron has minimal PATH)
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-set -euo pipefail
+# Note: intentionally omit -e (errexit). This reporter runs every 60s via
+# LaunchAgent — it's better to report partial data than die silently when
+# grep/pipeline commands return non-zero on "no match" edge cases.
+set -uo pipefail
 
 # ============================================================================
 # CONFIGURATION
