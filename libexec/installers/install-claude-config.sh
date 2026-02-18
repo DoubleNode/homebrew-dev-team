@@ -19,7 +19,7 @@ TEMPLATE_DIR="${TEMPLATE_DIR:-}"
 BACKUP_DIR="${DEV_TEAM_DIR}/.backups/claude-config-$(date +%Y%m%d-%H%M%S)"
 
 # Colors (if not already defined)
-if [[ ! -v COLOR_BLUE ]]; then
+if [[ -z "${COLOR_BLUE:-}" ]]; then
     COLOR_BLUE='\033[0;34m'
     COLOR_GREEN='\033[0;32m'
     COLOR_YELLOW='\033[1;33m'

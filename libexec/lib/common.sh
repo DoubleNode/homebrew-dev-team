@@ -3,20 +3,20 @@
 # Bash-compatible utility functions for dev-team installer scripts
 # Provides basic output functions: header, info, success, warning, error, prompt_yes_no
 
-# ANSI color codes
-readonly COLOR_RESET='\033[0m'
-readonly COLOR_BOLD='\033[1m'
-readonly COLOR_GREEN='\033[38;5;46m'
-readonly COLOR_RED='\033[38;5;196m'
-readonly COLOR_AMBER='\033[38;5;214m'
-readonly COLOR_BLUE='\033[38;5;33m'
-readonly COLOR_LILAC='\033[38;5;183m'
+# ANSI color codes (no readonly — allows safe re-sourcing in subshells)
+COLOR_RESET='\033[0m'
+COLOR_BOLD='\033[1m'
+COLOR_GREEN='\033[38;5;46m'
+COLOR_RED='\033[38;5;196m'
+COLOR_AMBER='\033[38;5;214m'
+COLOR_BLUE='\033[38;5;33m'
+COLOR_LILAC='\033[38;5;183m'
 
 # Semantic colors (for compatibility with wizard-ui.sh callers)
-readonly COLOR_SUCCESS="${COLOR_GREEN}"
-readonly COLOR_ERROR="${COLOR_RED}"
-readonly COLOR_WARNING="${COLOR_AMBER}"
-readonly COLOR_INFO="${COLOR_BLUE}"
+COLOR_SUCCESS="${COLOR_GREEN}"
+COLOR_ERROR="${COLOR_RED}"
+COLOR_WARNING="${COLOR_AMBER}"
+COLOR_INFO="${COLOR_BLUE}"
 
 # Print colored message
 print_colored() {
