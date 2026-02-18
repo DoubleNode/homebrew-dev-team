@@ -308,18 +308,24 @@ test_lcars_server() {
 install_kanban_system() {
     header "Installing LCARS Kanban System"
 
-    # Get selected teams from config
+    # Get selected teams from wizard env var, config file, or default
     local teams=()
-    if [ -f "$DEV_TEAM_DIR/.dev-team-config" ]; then
-        # Read teams from config file
-        while IFS= read -r team; do
-            teams+=("$team")
-        done < <(grep "^TEAM_" "$DEV_TEAM_DIR/.dev-team-config" | cut -d= -f2)
+    if [ -n "${SELECTED_TEAMS:-}" ]; then
+        # Teams passed from setup wizard
+        read -ra teams <<< "$SELECTED_TEAMS"
+    elif [ -f "$DEV_TEAM_DIR/.dev-team-config" ]; then
+        # Read teams from JSON config file
+        if command -v jq &>/dev/null; then
+            while IFS= read -r team; do
+                teams+=("$team")
+            done < <(jq -r '.teams[]' "$DEV_TEAM_DIR/.dev-team-config" 2>/dev/null)
+        fi
     fi
 
-    # Default to academy if no teams configured
+    # Default to empty if no teams found (don't assume academy)
     if [ ${#teams[@]} -eq 0 ]; then
-        teams=("academy")
+        warning "No teams specified for kanban boards"
+        return 0
     fi
 
     info "Setting up kanban boards for teams: ${teams[*]}"

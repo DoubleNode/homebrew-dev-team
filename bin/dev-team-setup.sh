@@ -581,6 +581,7 @@ if [ "$INSTALL_KANBAN" = "yes" ]; then
     (
       export DEV_TEAM_DIR="${INSTALL_DIR}"
       export INSTALL_ROOT="${DEV_TEAM_HOME}"
+      export SELECTED_TEAMS="${SELECTED_TEAMS[*]}"
       source "${DEV_TEAM_HOME}/libexec/lib/common.sh"
       source "${INSTALLERS_DIR}/install-kanban.sh"
       install_kanban_system

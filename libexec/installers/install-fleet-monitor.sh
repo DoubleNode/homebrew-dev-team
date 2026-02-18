@@ -457,8 +457,8 @@ install_fleet_monitor() {
     local machine_id=$(generate_machine_id)
     info "Machine ID: $machine_id"
 
-    # Create configuration files
-    machine_id=$(create_fleet_config "$machine_id" "${machine_nickname:-}")
+    # Create configuration files (don't capture stdout — it contains colored status messages)
+    create_fleet_config "$machine_id" "${machine_nickname:-}"
     create_machine_identity "$machine_id" "${machine_nickname:-}"
 
     # Install Fleet Monitor server (for standalone and server modes)
