@@ -322,7 +322,11 @@ get_tmux_sessions() {
             # Format: session_name: X windows (created DATE) [attached]
 
             session_name=$(echo "$line" | awk -F: '{print $1}')
-            windows=$(echo "$line" | grep -o '[0-9]* windows' | awk '{print $1}')
+            # Use sed instead of grep — grep returns exit 1 on no match,
+            # which kills the subshell under set -euo pipefail.
+            # tmux outputs "N windows" (plural) or "1 window" (singular).
+            windows=$(echo "$line" | sed -n 's/.*: \([0-9][0-9]*\) window.*/\1/p')
+            [ -z "$windows" ] && windows=0
             attached=$(echo "$line" | grep -q 'attached' && echo "true" || echo "false")
 
             # Extract creation date
@@ -533,10 +537,13 @@ main() {
 
     # Build payload
     echo "Collecting tmux session data..."
-    payload=$(build_payload)
+    if ! payload=$(build_payload); then
+        echo "Warning: build_payload failed, using fallback payload" >&2
+        payload="{\"machine\":{\"machine_id\":\"$MACHINE_ID\",\"hostname\":\"$HOSTNAME\",\"ip\":\"$IP_ADDRESS\",\"os\":\"$OS_TYPE\",\"timestamp\":\"$TIMESTAMP\"},\"sessions\":[],\"backup_status\":null}"
+    fi
 
-    # Count sessions
-    session_count=$(echo "$payload" | grep -o '"name":' | wc -l | tr -d ' ')
+    # Count sessions (grep -c returns exit 1 on no match, so catch with || true)
+    session_count=$(echo "$payload" | grep -c '"name":') || session_count=0
     echo "Found $session_count tmux sessions"
     echo ""
 
