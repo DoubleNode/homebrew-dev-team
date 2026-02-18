@@ -201,9 +201,13 @@ check_dependencies() {
     check_result fail "Claude Code not found" "Install: npm install -g @anthropic-ai/claude-code"
   fi
 
-  # Optional: Tailscale
+  # Optional: Tailscale (check CLI in PATH, Homebrew, and macOS app)
   if command -v tailscale &>/dev/null; then
-    check_result pass "Tailscale (optional)"
+    check_result pass "Tailscale (CLI in PATH)"
+  elif [ -x "/opt/homebrew/bin/tailscale" ]; then
+    check_result pass "Tailscale (Homebrew)"
+  elif [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
+    check_result pass "Tailscale (macOS app)"
   else
     check_result warn "Tailscale not installed (optional)" "Install: brew install --cask tailscale"
   fi
@@ -352,15 +356,15 @@ check_services() {
     fi
   fi
 
-  # Fleet Monitor (if installed)
+  # Fleet Monitor — check server AND client (reporter)
   local working_dir
   working_dir=$(get_working_dir)
 
-  if [ -d "${working_dir}/fleet-monitor" ]; then
-    # Try common ports
+  if [ -d "${working_dir}/fleet-monitor/server" ]; then
+    # Server mode: check if server is running
     local fleet_running=false
     for port in 3000 3001 3002; do
-      if curl -s -f http://localhost:${port}/health &>/dev/null 2>&1; then
+      if curl -s -o /dev/null -w '%{http_code}' "http://localhost:${port}/" 2>/dev/null | grep -q '200'; then
         check_result pass "Fleet Monitor server (port ${port})"
         fleet_running=true
         break
@@ -373,6 +377,13 @@ check_services() {
         echo "    Start: dev-team start fleet"
       fi
     fi
+  fi
+
+  # Fleet reporter client
+  if [ -f "${working_dir}/fleet-monitor/client/fleet-reporter.sh" ]; then
+    check_result pass "Fleet reporter client installed"
+  elif [ -f "$HOME/.dev-team/fleet-config.json" ]; then
+    check_result warn "Fleet reporter config exists but script missing"
   fi
 }
 
@@ -397,6 +408,16 @@ check_launchagents() {
     check_result warn "LCARS health LaunchAgent not loaded"
     if [ "$VERBOSE" = true ]; then
       echo "    Load: launchctl load ~/Library/LaunchAgents/com.devteam.lcars-health.plist"
+    fi
+  fi
+
+  # Fleet reporter agent
+  if launchctl list 2>/dev/null | grep -q "com.devteam.fleet-reporter"; then
+    check_result pass "Fleet reporter LaunchAgent loaded"
+  elif [ -f "$HOME/Library/LaunchAgents/com.devteam.fleet-reporter.plist" ]; then
+    check_result warn "Fleet reporter LaunchAgent not loaded"
+    if [ "$VERBOSE" = true ]; then
+      echo "    Load: launchctl load ~/Library/LaunchAgents/com.devteam.fleet-reporter.plist"
     fi
   fi
 }
@@ -445,12 +466,21 @@ check_network() {
     check_result warn "No internet connectivity"
   fi
 
-  # Tailscale (if installed)
+  # Tailscale (check CLI in PATH, Homebrew, and macOS app)
+  local ts_cmd=""
   if command -v tailscale &>/dev/null; then
-    if tailscale status &>/dev/null; then
+    ts_cmd="tailscale"
+  elif [ -x "/opt/homebrew/bin/tailscale" ]; then
+    ts_cmd="/opt/homebrew/bin/tailscale"
+  elif [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
+    ts_cmd="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+  fi
+
+  if [ -n "$ts_cmd" ]; then
+    if $ts_cmd status &>/dev/null; then
       check_result pass "Tailscale connected"
       if [ "$VERBOSE" = true ]; then
-        tailscale status --peers=false 2>/dev/null | head -n3
+        $ts_cmd status --peers=false 2>/dev/null | head -n3
       fi
     else
       check_result warn "Tailscale not connected"

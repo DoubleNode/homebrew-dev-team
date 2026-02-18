@@ -208,9 +208,13 @@ check_dependencies() {
     check_result fail "Claude Code not found" "Install: npm install -g @anthropic-ai/claude-code"
   fi
 
-  # Optional: Tailscale
+  # Optional: Tailscale (check CLI in PATH, Homebrew, and macOS app)
   if command -v tailscale &>/dev/null; then
-    check_result pass "Tailscale (optional)"
+    check_result pass "Tailscale (CLI in PATH)"
+  elif [ -x "/opt/homebrew/bin/tailscale" ]; then
+    check_result pass "Tailscale (Homebrew)"
+  elif [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
+    check_result pass "Tailscale (macOS app)"
   else
     check_result warn "Tailscale not installed (optional)" "Install: brew install --cask tailscale"
   fi
@@ -326,23 +330,38 @@ check_services() {
     check_result warn "LCARS Kanban server not running" "Start: dev-team start lcars"
   fi
 
-  # Fleet Monitor (if installed)
-  if [ -d "${DEV_TEAM_DIR}/fleet-monitor" ]; then
-    if curl -s -f http://localhost:3000/health &>/dev/null; then
-      check_result pass "Fleet Monitor server"
+  # Fleet Monitor — check server AND client (reporter)
+  if [ -d "${DEV_TEAM_DIR}/fleet-monitor/server" ]; then
+    # Server mode: check if server is running
+    if curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/ 2>/dev/null | grep -q '200'; then
+      check_result pass "Fleet Monitor server (port 3000)"
     else
       check_result warn "Fleet Monitor server not running"
     fi
   fi
 
+  # Fleet reporter client
+  if [ -f "${DEV_TEAM_DIR}/fleet-monitor/client/fleet-reporter.sh" ]; then
+    check_result pass "Fleet reporter client installed"
+  elif [ -f "$HOME/.dev-team/fleet-config.json" ]; then
+    check_result warn "Fleet reporter config exists but script missing"
+  fi
+
+  # Fleet reporter LaunchAgent
+  if launchctl list 2>/dev/null | grep -q "com.devteam.fleet-reporter"; then
+    check_result pass "Fleet reporter LaunchAgent loaded"
+  elif [ -f "${DEV_TEAM_DIR}/fleet-monitor/client/fleet-reporter.sh" ]; then
+    check_result warn "Fleet reporter LaunchAgent not loaded"
+  fi
+
   # LaunchAgents
-  if launchctl list | grep -q "com.devteam.kanban-backup"; then
+  if launchctl list 2>/dev/null | grep -q "com.devteam.kanban-backup"; then
     check_result pass "Kanban backup LaunchAgent"
   else
     check_result warn "Kanban backup LaunchAgent not loaded"
   fi
 
-  if launchctl list | grep -q "com.devteam.lcars-health"; then
+  if launchctl list 2>/dev/null | grep -q "com.devteam.lcars-health"; then
     check_result pass "LCARS health LaunchAgent"
   else
     check_result warn "LCARS health LaunchAgent not loaded"
