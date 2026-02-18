@@ -392,6 +392,152 @@ install_iterm_integration() {
     success "iTerm2 agent panel integration configured"
 }
 
+# Install fleet reporter client (status reporting script)
+install_fleet_reporter() {
+    local reporter_src="$SCRIPT_DIR/../../share/scripts/fleet-reporter.sh"
+    local reporter_dest="$DEV_TEAM_DIR/fleet-monitor/client/fleet-reporter.sh"
+
+    if [ ! -f "$reporter_src" ]; then
+        warning "Fleet reporter script not found (skipping status reporting)"
+        return 0
+    fi
+
+    info "Installing fleet reporter client..."
+
+    # Create target directory
+    mkdir -p "$DEV_TEAM_DIR/fleet-monitor/client"
+
+    # Copy fleet reporter script
+    cp "$reporter_src" "$reporter_dest"
+    chmod +x "$reporter_dest"
+
+    success "Fleet reporter installed at $reporter_dest"
+}
+
+# Create fleet reporter config at the path the reporter expects ($HOME/.dev-team/)
+create_fleet_reporter_config() {
+    local server_url="${1:-http://localhost:${FLEET_MONITOR_PORT}}"
+
+    info "Creating fleet reporter configuration..."
+
+    # The reporter reads from $HOME/.dev-team/fleet-config.json
+    mkdir -p "$HOME/.dev-team"
+
+    local reporter_config_template="$SCRIPT_DIR/../../share/templates/fleet-monitor/fleet-reporter-config.template.json"
+
+    # Determine central vs local settings based on mode
+    local central_enabled="false"
+    local central_api=""
+    local local_enabled="false"
+    local local_port="$FLEET_MONITOR_PORT"
+
+    case "$FLEET_MODE" in
+        client)
+            central_enabled="true"
+            central_api="${server_url}/api/status"
+            local_enabled="false"
+            ;;
+        standalone)
+            central_enabled="false"
+            central_api=""
+            local_enabled="true"
+            ;;
+        server)
+            central_enabled="false"
+            central_api=""
+            local_enabled="true"
+            ;;
+    esac
+
+    if [ -f "$reporter_config_template" ]; then
+        sed \
+            -e "s|{{FLEET_MODE}}|$FLEET_MODE|g" \
+            -e "s|{{CENTRAL_ENABLED}}|$central_enabled|g" \
+            -e "s|{{CENTRAL_API_ENDPOINT}}|$central_api|g" \
+            -e "s|{{LOCAL_ENABLED}}|$local_enabled|g" \
+            -e "s|{{LOCAL_PORT}}|$local_port|g" \
+            -e "s|{{DASHBOARD_GROUP}}||g" \
+            "$reporter_config_template" > "$HOME/.dev-team/fleet-config.json"
+    else
+        # Fallback: generate config directly
+        cat > "$HOME/.dev-team/fleet-config.json" <<RCEOF
+{
+  "mode": "$FLEET_MODE",
+  "centralServer": {
+    "enabled": $central_enabled,
+    "apiEndpoint": "$central_api",
+    "authToken": ""
+  },
+  "localServer": {
+    "enabled": $local_enabled,
+    "port": $local_port
+  },
+  "reporting": {
+    "interval": 60
+  },
+  "dashboardGroup": ""
+}
+RCEOF
+    fi
+
+    success "Fleet reporter config created at $HOME/.dev-team/fleet-config.json"
+}
+
+# Install LaunchAgent for fleet reporter (periodic status reporting)
+install_fleet_reporter_launchagent() {
+    local reporter_script="$DEV_TEAM_DIR/fleet-monitor/client/fleet-reporter.sh"
+    local plist_template="$SCRIPT_DIR/../../share/templates/fleet-monitor/fleet-reporter-launchagent.template.plist"
+    local plist_dest="$HOME/Library/LaunchAgents/com.devteam.fleet-reporter.plist"
+
+    if [ ! -f "$reporter_script" ]; then
+        warning "Fleet reporter not installed, skipping LaunchAgent"
+        return 0
+    fi
+
+    if [ ! -f "$plist_template" ]; then
+        warning "Fleet reporter LaunchAgent template not found (skipping)"
+        return 0
+    fi
+
+    info "Installing fleet reporter LaunchAgent..."
+
+    # Create LaunchAgents directory if needed
+    mkdir -p "$HOME/Library/LaunchAgents"
+
+    # Create logs directory
+    mkdir -p "$DEV_TEAM_DIR/logs"
+
+    # Substitute variables in template
+    sed \
+        -e "s|{{REPORTER_SCRIPT_PATH}}|$reporter_script|g" \
+        -e "s|{{DEV_TEAM_DIR}}|$DEV_TEAM_DIR|g" \
+        -e "s|{{USER_HOME}}|$HOME|g" \
+        "$plist_template" > "$plist_dest"
+
+    # Unload if already loaded (ignore errors)
+    launchctl unload "$plist_dest" 2>/dev/null || true
+
+    # Load the LaunchAgent
+    if launchctl load "$plist_dest"; then
+        success "Fleet reporter LaunchAgent installed and loaded"
+        info "Status reports will be sent every 60 seconds"
+    else
+        warning "Failed to load fleet reporter LaunchAgent (may need manual activation)"
+    fi
+}
+
+# Uninstall fleet reporter LaunchAgent
+uninstall_fleet_reporter_launchagent() {
+    local plist_file="$HOME/Library/LaunchAgents/com.devteam.fleet-reporter.plist"
+
+    if [ -f "$plist_file" ]; then
+        info "Unloading fleet reporter LaunchAgent"
+        launchctl unload "$plist_file" 2>/dev/null || true
+        rm -f "$plist_file"
+        success "Removed fleet reporter LaunchAgent"
+    fi
+}
+
 #──────────────────────────────────────────────────────────────────────────────
 # Main Installation Function
 #──────────────────────────────────────────────────────────────────────────────
@@ -478,6 +624,23 @@ install_fleet_monitor() {
     # Install iTerm2 integration (if available)
     install_iterm_integration
 
+    # Install fleet reporter client (for ALL modes — sends status to server)
+    install_fleet_reporter
+
+    # Determine the server URL for the reporter config
+    local server_url="http://localhost:${FLEET_MONITOR_PORT}"
+    if [ "$FLEET_MODE" = "client" ]; then
+        if [ -n "${FLEET_SERVER_URL:-}" ]; then
+            server_url="$FLEET_SERVER_URL"
+        fi
+    fi
+
+    # Create reporter config at the path fleet-reporter.sh expects
+    create_fleet_reporter_config "$server_url"
+
+    # Install reporter LaunchAgent (runs every 60 seconds)
+    install_fleet_reporter_launchagent
+
     # Final success message
     echo ""
     success "Fleet Monitor installation complete!"
@@ -506,6 +669,7 @@ install_fleet_monitor() {
         info "This machine will report to the configured Fleet Monitor server"
     fi
 
+    info "Fleet reporter: Sending status every 60 seconds"
     echo ""
 }
 
@@ -535,14 +699,22 @@ uninstall_fleet_monitor() {
         rm -rf "$DEV_TEAM_DIR/fleet-monitor"
     fi
 
+    # Stop and remove Fleet Reporter LaunchAgent
+    uninstall_fleet_reporter_launchagent
+
     # Remove configuration files
     rm -f "$DEV_TEAM_DIR/config/fleet-config.json"
     rm -f "$DEV_TEAM_DIR/config/machine-identity.json"
     rm -f "$DEV_TEAM_DIR/tailscale-funnel-restore.sh"
 
+    # Remove reporter config
+    rm -f "$HOME/.dev-team/fleet-config.json"
+
     # Remove logs
     rm -f "$DEV_TEAM_DIR/logs/fleet-monitor.log"
     rm -f "$DEV_TEAM_DIR/logs/fleet-monitor.error.log"
+    rm -f "$DEV_TEAM_DIR/logs/fleet-reporter.log"
+    rm -f "$DEV_TEAM_DIR/logs/fleet-reporter.error.log"
     rm -f "$DEV_TEAM_DIR/logs/tailscale-funnel.log"
     rm -f "$DEV_TEAM_DIR/logs/tailscale-funnel.error.log"
 

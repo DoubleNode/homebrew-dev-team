@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.8"
 # dependencies = ["pyyaml"]
@@ -8,7 +7,11 @@ Claude Code Write Tool Damage Control
 ======================================
 
 Blocks writes to protected files via PreToolUse hook on Write tool.
-Loads zeroAccessPaths and readOnlyPaths from patterns.yaml.
+Loads zeroAccessPaths, readOnlyPaths, and kanbanProtectedPaths from patterns.yaml.
+
+Features:
+  - Path-based protection (zero-access, read-only)
+  - Kanban board item deletion prevention (content-aware)
 
 Exit codes:
   0 = Allow write
@@ -18,9 +21,10 @@ Exit codes:
 import json
 import sys
 import os
+import re
 import fnmatch
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Set
 
 import yaml
 
@@ -110,6 +114,92 @@ def check_path(file_path: str, config: Dict[str, Any]) -> Tuple[bool, str]:
     return False, ""
 
 
+# ---------------------------------------------------------------------------
+# Kanban Board Item Deletion Protection
+# ---------------------------------------------------------------------------
+
+def is_kanban_board(file_path: str, config: Dict[str, Any]) -> bool:
+    """Check if file is a kanban board file."""
+    for pattern in config.get("kanbanProtectedPaths", []):
+        if match_path(file_path, pattern):
+            return True
+    return False
+
+
+def extract_ids(content: str) -> Set[str]:
+    """Extract all 'id' field values from JSON content using regex.
+
+    Matches the literal key "id" (not workingOnId, nextId, etc.)
+    and extracts the string value. Fast regex approach avoids
+    full JSON parsing for large board files.
+    """
+    return set(re.findall(r'"id"\s*:\s*"([^"]+)"', content))
+
+
+def check_kanban_deletion(
+    file_path: str, new_content: str
+) -> Tuple[bool, str]:
+    """Check if writing new_content would delete kanban items.
+
+    Returns (blocked, reason). If blocked, reason contains the
+    error message with instructions for authorization.
+    """
+    if not os.path.exists(file_path):
+        return False, ""  # New file, nothing to protect
+
+    try:
+        with open(file_path, "r") as f:
+            existing_content = f.read()
+    except (IOError, OSError):
+        return False, ""  # Can't read existing file, allow
+
+    existing_ids = extract_ids(existing_content)
+    new_ids = extract_ids(new_content)
+    missing_ids = existing_ids - new_ids
+
+    if not missing_ids:
+        return False, ""  # No items removed
+
+    # Check for authorization files
+    unauthorized: Set[str] = set()
+    authorized: Set[str] = set()
+    for item_id in missing_ids:
+        auth_file = f"/tmp/kanban-allow-removal-{item_id}"
+        if os.path.exists(auth_file):
+            authorized.add(item_id)
+        else:
+            unauthorized.add(item_id)
+
+    if not unauthorized:
+        # All removals authorized — consume the tokens
+        for item_id in authorized:
+            try:
+                os.remove(f"/tmp/kanban-allow-removal-{item_id}")
+            except OSError:
+                pass
+        return False, ""
+
+    # Build block message
+    lines = [
+        f"KANBAN PROTECTION: Write to {os.path.basename(file_path)} would "
+        f"remove {len(missing_ids)} item/subitem ID(s).",
+        "",
+    ]
+    for item_id in sorted(unauthorized):
+        lines.append(f"  - {item_id}")
+    lines.append("")
+    lines.append("Items must NEVER be deleted from kanban boards.")
+    lines.append("To mark items as done, set their 'status' to 'completed'.")
+    lines.append("")
+    lines.append("If removal is truly intentional, authorize each ID first:")
+    for item_id in sorted(unauthorized):
+        lines.append(f"  touch /tmp/kanban-allow-removal-{item_id}")
+    lines.append("")
+    lines.append("Auth files are single-use and consumed after the write.")
+
+    return True, "\n".join(lines)
+
+
 def main() -> None:
     config = load_config()
 
@@ -130,10 +220,19 @@ def main() -> None:
     if not file_path:
         sys.exit(0)
 
+    # Path-based protection (zero-access, read-only)
     blocked, reason = check_path(file_path, config)
     if blocked:
         print(f"SECURITY: Blocked write to {reason}: {file_path}", file=sys.stderr)
         sys.exit(2)
+
+    # Kanban board item deletion protection (content-aware)
+    if is_kanban_board(file_path, config):
+        new_content = tool_input.get("content", "")
+        blocked, reason = check_kanban_deletion(file_path, new_content)
+        if blocked:
+            print(reason, file=sys.stderr)
+            sys.exit(2)
 
     sys.exit(0)
 

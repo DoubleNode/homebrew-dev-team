@@ -620,3 +620,18 @@ noDeletePaths:
   # - app/
   # - tests/
   # - docs/
+
+# ---------------------------------------------------------------------------
+# KANBAN BOARD PROTECTION - Content-aware item deletion prevention
+# ---------------------------------------------------------------------------
+# Files matching these patterns are protected against item deletion.
+# When writing/editing these files, the hook compares existing vs new item IDs.
+# If any items would be removed, the operation is BLOCKED unless authorized.
+#
+# To authorize intentional removal (single-use, item-specific):
+#   touch /tmp/kanban-allow-removal-{ITEM_ID}
+#
+# Auth files are consumed after successful use (one-time tokens).
+# This protects ALL teams (including Academy) from accidental deletion.
+kanbanProtectedPaths:
+  - "*-board.json"
