@@ -174,6 +174,7 @@ stop_agents() {
   local agents=(
     "com.devteam.kanban-backup.plist"
     "com.devteam.lcars-health.plist"
+    "com.devteam.fleet-reporter.plist"
   )
 
   local unloaded=0

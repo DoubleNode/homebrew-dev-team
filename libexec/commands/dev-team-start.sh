@@ -145,58 +145,86 @@ start_lcars() {
   fi
 }
 
-# Start Fleet Monitor
+# Start Fleet Monitor (server and/or reporter client)
 start_fleet() {
   print_section "Starting Fleet Monitor"
 
-  local fleet_dir="${WORKING_DIR}/fleet-monitor/server"
+  local fleet_server_dir="${WORKING_DIR}/fleet-monitor/server"
+  local fleet_reporter="${WORKING_DIR}/fleet-monitor/client/fleet-reporter.sh"
+  local has_server=false
+  local has_reporter=false
 
-  if [ ! -d "$fleet_dir" ]; then
+  [ -d "$fleet_server_dir" ] && has_server=true
+  [ -f "$fleet_reporter" ] && has_reporter=true
+
+  # Nothing installed at all
+  if [ "$has_server" = false ] && [ "$has_reporter" = false ]; then
     print_warning "Fleet Monitor not installed"
     return 0
   fi
 
-  # Check if already running
-  for port in 3000 3001 3002; do
-    if curl -s -f http://localhost:${port}/health &>/dev/null 2>&1; then
-      print_warning "Fleet Monitor already running on port ${port}"
-      return 0
+  # Start server if installed
+  if [ "$has_server" = true ]; then
+    # Check if already running
+    local server_running=false
+    for port in 3000 3001 3002; do
+      if curl -s -o /dev/null -w '%{http_code}' "http://localhost:${port}/" 2>/dev/null | grep -q '200'; then
+        print_warning "Fleet Monitor server already running on port ${port}"
+        server_running=true
+        break
+      fi
+    done
+
+    if [ "$server_running" = false ]; then
+      print_info "Starting Fleet Monitor server..."
+      cd "$fleet_server_dir"
+
+      # Make sure dependencies are installed
+      if [ ! -d "node_modules" ]; then
+        print_info "Installing dependencies..."
+        npm install --silent
+      fi
+
+      # Start server in background
+      nohup npm start > /tmp/fleet-monitor.log 2>&1 &
+      local pid=$!
+
+      # Wait for startup
+      sleep 3
+
+      # Check if it started successfully
+      local started=false
+      for port in 3000 3001 3002; do
+        if curl -s -o /dev/null -w '%{http_code}' "http://localhost:${port}/" 2>/dev/null | grep -q '200'; then
+          print_success "Fleet Monitor server started (PID: ${pid}, port: ${port})"
+          print_info "Access at: http://localhost:${port}"
+          started=true
+          break
+        fi
+      done
+
+      if [ "$started" = false ]; then
+        print_error "Failed to start Fleet Monitor server"
+        print_info "Check logs: /tmp/fleet-monitor.log"
+      fi
     fi
-  done
-
-  # Start server
-  print_info "Starting Fleet Monitor..."
-
-  cd "$fleet_dir"
-
-  # Make sure dependencies are installed
-  if [ ! -d "node_modules" ]; then
-    print_info "Installing dependencies..."
-    npm install --silent
   fi
 
-  # Start server in background
-  nohup npm start > /tmp/fleet-monitor.log 2>&1 &
-  local pid=$!
-
-  # Wait for startup
-  sleep 3
-
-  # Check if it started successfully
-  local started=false
-  for port in 3000 3001 3002; do
-    if curl -s -f http://localhost:${port}/health &>/dev/null 2>&1; then
-      print_success "Fleet Monitor started (PID: ${pid}, port: ${port})"
-      print_info "Access at: http://localhost:${port}"
-      started=true
-      break
+  # Ensure fleet reporter LaunchAgent is loaded (client mode)
+  if [ "$has_reporter" = true ]; then
+    local reporter_plist="$HOME/Library/LaunchAgents/com.devteam.fleet-reporter.plist"
+    if launchctl list 2>/dev/null | grep -q "com.devteam.fleet-reporter"; then
+      print_info "Fleet reporter already active"
+    elif [ -f "$reporter_plist" ]; then
+      print_info "Loading Fleet reporter LaunchAgent..."
+      if launchctl load "$reporter_plist" 2>/dev/null; then
+        print_success "Fleet reporter started"
+      else
+        print_error "Failed to load Fleet reporter LaunchAgent"
+      fi
+    else
+      print_warning "Fleet reporter installed but LaunchAgent plist not found"
     fi
-  done
-
-  if [ "$started" = false ]; then
-    print_error "Failed to start Fleet Monitor"
-    print_info "Check logs: /tmp/fleet-monitor.log"
-    return 1
   fi
 
   return 0
@@ -209,6 +237,7 @@ start_agents() {
   local agents=(
     "com.devteam.kanban-backup.plist"
     "com.devteam.lcars-health.plist"
+    "com.devteam.fleet-reporter.plist"
   )
 
   local loaded=0
