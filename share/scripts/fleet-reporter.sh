@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Fleet Status Reporter
 # Collects tmux session data and reports to central monitoring server
 # Run via cron every 60 seconds: * * * * * ~/dev-team/fleet-monitor/client/fleet-reporter.sh
@@ -267,30 +267,25 @@ parse_session_name() {
 }
 
 # Find all tmux sockets (team-specific sockets in /tmp/)
+# Outputs one socket path per line; no output if none found.
+# Avoids bash arrays entirely for bash 3.2 compatibility with set -u.
 find_tmux_sockets() {
-    local sockets=()
-
     # Check for team-specific sockets directly in /tmp/
-    # These are socket files (type 's') owned by current user
     for socket in /tmp/academy /tmp/android /tmp/command /tmp/dns /tmp/firebase /tmp/freelance /tmp/ios /tmp/legal /tmp/mainevent /tmp/medical; do
         if [ -S "$socket" ]; then
-            sockets+=("$socket")
+            echo "$socket"
         fi
     done
 
     # Also check standard tmux socket directory
-    local uid=$(id -u)
+    local uid
+    uid=$(id -u)
     if [ -d "/tmp/tmux-${uid}" ]; then
         for socket in /tmp/tmux-${uid}/*; do
             if [ -S "$socket" ]; then
-                sockets+=("$socket")
+                echo "$socket"
             fi
         done
-    fi
-
-    # Return sockets, one per line (guard for empty array with set -u)
-    if [ ${#sockets[@]} -gt 0 ]; then
-        printf '%s\n' "${sockets[@]}"
     fi
 }
 
