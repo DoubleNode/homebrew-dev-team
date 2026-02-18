@@ -411,9 +411,46 @@ INSTALL_KANBAN="${ans:-yes}"
 echo ""
 
 # Fleet Monitor
-echo -e "${CYAN}Fleet Monitor${NC} — Multi-machine coordination (requires Tailscale for remote)"
-read -p "  Install Fleet Monitor? (yes/no) [no]: " ans
-INSTALL_FLEET="${ans:-no}"
+echo -e "${CYAN}Fleet Monitor${NC} — Cross-machine monitoring and agent status tracking"
+echo -e "  Fleet Monitor provides a web dashboard to see agent sessions across"
+echo -e "  all your development machines. Requires Tailscale for remote access."
+echo ""
+echo "  Options:"
+echo "    1) Skip       — Don't install Fleet Monitor"
+echo "    2) New Server — Set up a NEW Fleet Monitor server on this machine"
+echo "    3) Connect    — Connect this machine to an EXISTING Fleet Monitor"
+echo ""
+read -p "  Choose (1/2/3) [1]: " fleet_choice
+fleet_choice="${fleet_choice:-1}"
+
+INSTALL_FLEET="no"
+FLEET_MODE="standalone"
+FLEET_SERVER_URL=""
+
+case "$fleet_choice" in
+  2)
+    INSTALL_FLEET="yes"
+    FLEET_MODE="server"
+    echo -e "  ${GREEN}✓${NC} Will set up a new Fleet Monitor server"
+    ;;
+  3)
+    INSTALL_FLEET="yes"
+    FLEET_MODE="client"
+    echo ""
+    echo "  Enter the URL of the existing Fleet Monitor server."
+    echo "  (e.g., http://192.168.1.100:3000 or https://my-mac.tail12345.ts.net)"
+    read -p "  Server URL: " FLEET_SERVER_URL
+    if [ -z "$FLEET_SERVER_URL" ]; then
+      echo -e "  ${RED}✗ No URL provided — skipping Fleet Monitor${NC}"
+      INSTALL_FLEET="no"
+    else
+      echo -e "  ${GREEN}✓${NC} Will connect to: ${FLEET_SERVER_URL}"
+    fi
+    ;;
+  *)
+    echo -e "  Skipping Fleet Monitor"
+    ;;
+esac
 echo ""
 
 echo -e "${GREEN}✓${NC} Features selected"
@@ -432,7 +469,15 @@ echo "  Features:"
 echo "    Shell Environment:   ${INSTALL_SHELL}"
 echo "    Claude Code Config:  ${INSTALL_CLAUDE}"
 echo "    LCARS Kanban:        ${INSTALL_KANBAN}"
-echo "    Fleet Monitor:       ${INSTALL_FLEET}"
+if [ "$INSTALL_FLEET" = "yes" ]; then
+  if [ "$FLEET_MODE" = "client" ]; then
+    echo "    Fleet Monitor:       Connect to ${FLEET_SERVER_URL}"
+  else
+    echo "    Fleet Monitor:       New server (${FLEET_MODE} mode)"
+  fi
+else
+  echo "    Fleet Monitor:       skip"
+fi
 echo ""
 read -p "Proceed with installation? (yes/no): " confirm
 
@@ -559,6 +604,10 @@ if [ "$INSTALL_FLEET" = "yes" ]; then
       export DEV_TEAM_DIR="${INSTALL_DIR}"
       export INSTALL_ROOT="${DEV_TEAM_HOME}"
       export MACHINE_NAME="${MACHINE_NAME}"
+      export FLEET_MODE="${FLEET_MODE}"
+      export FLEET_SERVER_URL="${FLEET_SERVER_URL}"
+      export NON_INTERACTIVE="true"
+      export INSTALL_FLEET_MONITOR="true"
       source "${DEV_TEAM_HOME}/libexec/lib/common.sh"
       source "${INSTALLERS_DIR}/install-fleet-monitor.sh"
       install_fleet_monitor
@@ -591,7 +640,9 @@ cat > "${INSTALL_DIR}/.dev-team-config" <<EOF
     "shell_environment": $(to_json_bool "$INSTALL_SHELL"),
     "claude_code_config": $(to_json_bool "$INSTALL_CLAUDE"),
     "lcars_kanban": $(to_json_bool "$INSTALL_KANBAN"),
-    "fleet_monitor": $(to_json_bool "$INSTALL_FLEET")
+    "fleet_monitor": $(to_json_bool "$INSTALL_FLEET"),
+    "fleet_mode": "${FLEET_MODE}",
+    "fleet_server_url": "${FLEET_SERVER_URL}"
   }
 }
 EOF

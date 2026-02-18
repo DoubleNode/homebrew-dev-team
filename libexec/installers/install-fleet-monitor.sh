@@ -111,25 +111,45 @@ create_fleet_config() {
 
     local server_url="http://localhost:${FLEET_MONITOR_PORT}"
     if [ "$FLEET_MODE" = "client" ]; then
-        # For client mode, we'll need to prompt for server URL
-        read -p "Enter Fleet Monitor server URL (default: $server_url): " custom_url
-        server_url="${custom_url:-$server_url}"
+        # Use pre-configured URL from wizard, or prompt if running standalone
+        if [ -n "${FLEET_SERVER_URL:-}" ]; then
+            server_url="$FLEET_SERVER_URL"
+        elif [ "${NON_INTERACTIVE:-}" != "true" ]; then
+            read -p "Enter Fleet Monitor server URL (default: $server_url): " custom_url
+            server_url="${custom_url:-$server_url}"
+        fi
     fi
 
-    # Create config from template
-    sed \
-        -e "s|{{FLEET_MODE}}|$FLEET_MODE|g" \
-        -e "s|{{FLEET_SERVER_URL}}|$server_url|g" \
-        -e "s|{{MACHINE_ID}}|$machine_id|g" \
-        -e "s|{{HOSTNAME}}|$hostname|g" \
-        -e "s|{{NICKNAME}}|${nickname:-}|g" \
-        -e "s|{{TAILSCALE_ENABLED}}|$tailscale_enabled|g" \
-        -e "s|{{LOCAL_PORT}}|$FLEET_MONITOR_PORT|g" \
-        -e "s|{{PUBLIC_PORT}}|$TAILSCALE_FUNNEL_PORT|g" \
-        -e "s|{{SHOW_AGENT_PANELS}}|$show_agent_panels|g" \
-        -e "s|{{ITERM_INTEGRATION}}|$iterm_integration|g" \
-        "$SCRIPT_DIR/../../share/templates/fleet-monitor/fleet-config.template.json" \
-        > "$config_file"
+    # Create config from template or generate directly
+    local config_template="$SCRIPT_DIR/../../share/templates/fleet-monitor/fleet-config.template.json"
+    if [ -f "$config_template" ]; then
+        sed \
+            -e "s|{{FLEET_MODE}}|$FLEET_MODE|g" \
+            -e "s|{{FLEET_SERVER_URL}}|$server_url|g" \
+            -e "s|{{MACHINE_ID}}|$machine_id|g" \
+            -e "s|{{HOSTNAME}}|$hostname|g" \
+            -e "s|{{NICKNAME}}|${nickname:-}|g" \
+            -e "s|{{TAILSCALE_ENABLED}}|$tailscale_enabled|g" \
+            -e "s|{{LOCAL_PORT}}|$FLEET_MONITOR_PORT|g" \
+            -e "s|{{PUBLIC_PORT}}|$TAILSCALE_FUNNEL_PORT|g" \
+            -e "s|{{SHOW_AGENT_PANELS}}|$show_agent_panels|g" \
+            -e "s|{{ITERM_INTEGRATION}}|$iterm_integration|g" \
+            "$config_template" > "$config_file"
+    else
+        # Fallback: generate config directly
+        cat > "$config_file" <<CFGEOF
+{
+  "mode": "$FLEET_MODE",
+  "serverUrl": "$server_url",
+  "machineId": "$machine_id",
+  "hostname": "$hostname",
+  "nickname": "${nickname:-}",
+  "tailscale": { "enabled": $tailscale_enabled },
+  "ports": { "local": $FLEET_MONITOR_PORT, "public": $TAILSCALE_FUNNEL_PORT },
+  "display": { "showAgentPanels": $show_agent_panels, "itermIntegration": $iterm_integration }
+}
+CFGEOF
+    fi
 
     success "Created Fleet Monitor configuration at $config_file"
     echo "$machine_id"
@@ -162,22 +182,38 @@ create_machine_identity() {
         iterm_available="true"
     fi
 
-    # Create identity from template
-    sed \
-        -e "s|{{MACHINE_ID}}|$machine_id|g" \
-        -e "s|{{HOSTNAME}}|$hostname|g" \
-        -e "s|{{NICKNAME}}|${nickname:-}|g" \
-        -e "s|{{TIMESTAMP}}|$timestamp|g" \
-        -e "s|{{MACHINE_ROLE}}|${FLEET_MODE}|g" \
-        -e "s|{{ORGANIZATION}}|starfleet|g" \
-        -e "s|{{CAN_HOST_SERVER}}|$can_host_server|g" \
-        -e "s|{{TAILSCALE_ENABLED}}|$tailscale_enabled|g" \
-        -e "s|{{ITERM_AVAILABLE}}|$iterm_available|g" \
-        -e "s|{{LOCAL_IP}}|$local_ip|g" \
-        -e "s|{{TAILSCALE_IP}}|${tailscale_ip:-unknown}|g" \
-        -e "s|{{TAILSCALE_HOSTNAME}}|${tailscale_hostname:-unknown}|g" \
-        "$SCRIPT_DIR/../../share/templates/fleet-monitor/machine-identity.template.json" \
-        > "$identity_file"
+    # Create identity from template or generate directly
+    local identity_template="$SCRIPT_DIR/../../share/templates/fleet-monitor/machine-identity.template.json"
+    if [ -f "$identity_template" ]; then
+        sed \
+            -e "s|{{MACHINE_ID}}|$machine_id|g" \
+            -e "s|{{HOSTNAME}}|$hostname|g" \
+            -e "s|{{NICKNAME}}|${nickname:-}|g" \
+            -e "s|{{TIMESTAMP}}|$timestamp|g" \
+            -e "s|{{MACHINE_ROLE}}|${FLEET_MODE}|g" \
+            -e "s|{{ORGANIZATION}}|starfleet|g" \
+            -e "s|{{CAN_HOST_SERVER}}|$can_host_server|g" \
+            -e "s|{{TAILSCALE_ENABLED}}|$tailscale_enabled|g" \
+            -e "s|{{ITERM_AVAILABLE}}|$iterm_available|g" \
+            -e "s|{{LOCAL_IP}}|$local_ip|g" \
+            -e "s|{{TAILSCALE_IP}}|${tailscale_ip:-unknown}|g" \
+            -e "s|{{TAILSCALE_HOSTNAME}}|${tailscale_hostname:-unknown}|g" \
+            "$identity_template" > "$identity_file"
+    else
+        # Fallback: generate identity directly
+        cat > "$identity_file" <<IDEOF
+{
+  "machineId": "$machine_id",
+  "hostname": "$hostname",
+  "nickname": "${nickname:-}",
+  "registered": "$timestamp",
+  "role": "$FLEET_MODE",
+  "organization": "starfleet",
+  "capabilities": { "canHostServer": $can_host_server, "tailscale": $tailscale_enabled, "iterm": $iterm_available },
+  "network": { "localIp": "$local_ip", "tailscaleIp": "${tailscale_ip:-unknown}", "tailscaleHostname": "${tailscale_hostname:-unknown}" }
+}
+IDEOF
+    fi
 
     success "Created machine identity at $identity_file"
 }
@@ -194,8 +230,8 @@ install_fleet_server() {
 
     # Check if Fleet Monitor source exists in the package
     if [ ! -d "$SCRIPT_DIR/../../fleet-monitor" ]; then
-        error "Fleet Monitor source not found in package"
-        return 1
+        warning "Fleet Monitor source not found in package (skipping server install)"
+        return 0
     fi
 
     # Copy Fleet Monitor files
@@ -427,8 +463,11 @@ install_fleet_monitor() {
 
     # Install Fleet Monitor server (for standalone and server modes)
     if [ "$FLEET_MODE" != "client" ]; then
-        install_fleet_server || return 1
-        install_fleet_launchagent || return 1
+        install_fleet_server
+        # Only install LaunchAgent if server was actually installed
+        if [ -d "$DEV_TEAM_DIR/fleet-monitor/server" ]; then
+            install_fleet_launchagent
+        fi
     fi
 
     # Install Tailscale integration (if available)
