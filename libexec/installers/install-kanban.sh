@@ -262,10 +262,15 @@ install_backup_launchagent() {
     # Create LaunchAgents directory if needed
     mkdir -p "$HOME/Library/LaunchAgents"
 
+    # Find python3 path
+    local python3_path
+    python3_path="$(command -v python3 2>/dev/null || echo "/usr/bin/python3")"
+
     # Substitute variables in template
     sed -e "s|{{USER_HOME}}|$HOME|g" \
         -e "s|{{DEV_TEAM_DIR}}|$DEV_TEAM_DIR|g" \
         -e "s|{{BACKUP_INTERVAL}}|$KANBAN_BACKUP_INTERVAL|g" \
+        -e "s|{{PYTHON3_PATH}}|$python3_path|g" \
         "$plist_template" > "$plist_dest"
 
     # Unload if already loaded (ignore errors)
@@ -384,13 +389,15 @@ install_kanban_system() {
     info ""
     info "Kanban System Ready:"
     info "  • Boards initialized for: ${teams[*]}"
-    info "  • LCARS UI: http://localhost:$lcars_port"
-    info "  • Backup system: Automated (every 15 min)"
-    info "  • Helper functions: source $DEV_TEAM_DIR/kanban-helpers.sh"
+    [ -d "$DEV_TEAM_DIR/lcars-ui" ] && info "  • LCARS UI: http://localhost:$lcars_port"
+    [ -f "$DEV_TEAM_DIR/kanban-backup.py" ] && info "  • Backup system: Automated (every 15 min)"
+    [ -f "$DEV_TEAM_DIR/kanban-helpers.sh" ] && info "  • Helper functions: source $DEV_TEAM_DIR/kanban-helpers.sh"
     info ""
-    info "To start LCARS server manually:"
-    info "  python3 $DEV_TEAM_DIR/lcars-ui/server.py $lcars_port"
-    info ""
+    if [ -d "$DEV_TEAM_DIR/lcars-ui" ]; then
+        info "To start LCARS server manually:"
+        info "  python3 $DEV_TEAM_DIR/lcars-ui/server.py $lcars_port"
+        info ""
+    fi
 
     return 0
 }
